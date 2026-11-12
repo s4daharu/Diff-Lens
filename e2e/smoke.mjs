@@ -45,7 +45,7 @@ page.on('console', (m) => {
 await page.goto(`http://localhost:${PORT}/`, { waitUntil: 'networkidle' });
 
 const ensureSidebarOpen = async () => {
-  const button = page.getByRole('button', { name: 'Diff details' });
+  const button = page.getByRole('button', { name: 'Diff details', exact: true });
   if ((await button.getAttribute('aria-expanded')) !== 'true') {
     await button.click();
     await page.waitForSelector('.diff-sidebar');
@@ -112,17 +112,17 @@ check('sources bar visible', await page.locator('.sources-bar').isVisible());
 check('sidebar hidden by default', (await page.locator('.diff-sidebar').count()) === 0);
 check(
   'details toggle starts collapsed',
-  (await page.getByRole('button', { name: 'Diff details' }).getAttribute('aria-expanded')) === 'false',
+  (await page.getByRole('button', { name: 'Diff details', exact: true }).getAttribute('aria-expanded')) === 'false',
 );
 check('toolbar visible', await page.locator('.diff-toolbar').isVisible());
 await ensureSidebarOpen();
 check('sidebar opens on demand', await page.locator('.diff-sidebar').isVisible());
-await page.getByRole('button', { name: 'Close diff details' }).click();
+await page.getByRole('button', { name: 'Close details panel' }).click();
 await page.waitForTimeout(100);
 check('sidebar close hides details', (await page.locator('.diff-sidebar').count()) === 0);
 check(
   'closing details restores toggle focus',
-  await page.getByRole('button', { name: 'Diff details' }).evaluate(
+  await page.getByRole('button', { name: 'Diff details', exact: true }).evaluate(
     (button) => document.activeElement === button,
   ),
 );

@@ -98,7 +98,7 @@ export function DiffSidebar({
           type="button"
           className="btn btn--small btn--icon btn--ghost"
           onClick={onClose}
-          aria-label="Close diff details"
+          aria-label="Close details panel"
           title="Close details"
         >
           <CloseIcon size={15} />
