@@ -183,7 +183,7 @@ export function DiffSidebar({
                 <span className="diff-nav-label">
                   {currentSectionIndex != null
                     ? `${currentSectionIndex + 1} of ${totalSections} sections`
-                    : `${totalSections} ${totalSections === 1 ? 'section' : 'sections'}`
+                    : `${totalSections} ${totalSections === 1 ? 'section' : 'sections'}`}
                 </span>
                 <button
                   type="button"
