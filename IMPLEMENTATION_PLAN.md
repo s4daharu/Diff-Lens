@@ -59,17 +59,17 @@ Acceptance:
 - Existing case/whitespace/line-ending behavior does not regress.
 - Large-file comparisons remain responsive.
 
-### Milestone 2 — Moved-block detection
+### Milestone 2 — Moved-block detection ✅
 
 Goal: distinguish content that moved from content that was independently deleted and re-added.
 
-- [ ] Add post-processing in the worker that pairs sufficiently similar deleted and added change sections using normalized line hashes plus bounded similarity scoring.
-- [ ] Keep the algorithm bounded for large diffs; avoid an unrestricted O(n²) section comparison.
-- [ ] Extend change-section metadata with moved-from / moved-to relationships without changing patch semantics.
-- [ ] Render moved sections with a distinct visual treatment and accessible description.
-- [ ] Add Previous/Next moved-section navigation and links between paired locations.
-- [ ] Preserve ordinary added/deleted classification when similarity is below threshold or ambiguous.
-- [ ] Add regression tests for exact moves, lightly edited moves, duplicate blocks, and large files.
+- [x] Add post-processing in the worker that pairs sufficiently similar deleted and added change sections using normalized line hashes plus bounded similarity scoring.
+- [x] Keep the algorithm bounded for large diffs; avoid an unrestricted O(n²) section comparison.
+- [x] Extend change-section metadata with moved-from / moved-to relationships without changing patch semantics.
+- [x] Render moved sections with a distinct visual treatment and accessible description.
+- [x] Add Previous/Next moved-section navigation and links between paired locations.
+- [x] Preserve ordinary added/deleted classification when similarity is below threshold or ambiguous.
+- [x] Add regression tests for exact moves, lightly edited moves, duplicate blocks, and large files.
 
 Acceptance:
 - Moving an unchanged paragraph/block is identified as a move rather than only an unrelated deletion plus addition.

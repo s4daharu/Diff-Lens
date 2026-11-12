@@ -27,6 +27,11 @@ interface DiffSidebarProps {
   currentSectionIndex: number | null;
   onNextSection: () => void;
   onPrevSection: () => void;
+  totalMovedSections: number;
+  currentMovedSectionIndex: number | null;
+  onNextMovedSection: () => void;
+  onPrevMovedSection: () => void;
+  onJumpToMovePair: (rowIndex: number) => void;
   sections: ChangeSection[];
   hiddenSections: number;
   activeSectionStartRow: number | null;
@@ -55,6 +60,12 @@ function formatLocation(entry: ChangeSection): string {
   if (entry.kind === 'deleted') return formatRange(entry.oldNum, entry.oldEndNum);
   if (entry.kind === 'added') return formatRange(entry.newNum, entry.newEndNum);
   return `${formatRange(entry.oldNum, entry.oldEndNum)} → ${formatRange(entry.newNum, entry.newEndNum)}`;
+}
+
+function sectionLabel(entry: ChangeSection): string {
+  if (entry.moveRole === 'from') return 'Moved from';
+  if (entry.moveRole === 'to') return 'Moved to';
+  return KIND_LABELS[entry.kind];
 }
 
 function IgnoreRuleEditor({
@@ -175,6 +186,11 @@ export function DiffSidebar({
   currentSectionIndex,
   onNextSection,
   onPrevSection,
+  totalMovedSections,
+  currentMovedSectionIndex,
+  onNextMovedSection,
+  onPrevMovedSection,
+  onJumpToMovePair,
   sections,
   hiddenSections,
   activeSectionStartRow,
@@ -349,37 +365,100 @@ export function DiffSidebar({
                 </button>
               </div>
 
+              {totalMovedSections > 0 && (
+                <div
+                  className="diff-nav-group diff-nav-group--moved"
+                  role="group"
+                  aria-label="Moved section navigation"
+                >
+                  <span className="diff-nav-label diff-nav-label--moved">
+                    {currentMovedSectionIndex != null
+                      ? `${currentMovedSectionIndex + 1} of ${totalMovedSections} moved`
+                      : `${totalMovedSections} moved`}
+                  </span>
+                  <button
+                    type="button"
+                    className="btn btn--small btn--icon"
+                    onClick={onPrevMovedSection}
+                    title="Previous moved section"
+                    aria-label="Previous moved section"
+                  >
+                    <ChevronUpIcon size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn--small btn--icon"
+                    onClick={onNextMovedSection}
+                    title="Next moved section"
+                    aria-label="Next moved section"
+                  >
+                    <ChevronDownIcon size={14} />
+                  </button>
+                </div>
+              )}
+
               {sections.length > 0 && (
                 <div className="changes-list" ref={listRef}>
-                  {sections.map((entry, i) => (
-                    <button
-                      key={entry.rowIndex}
-                      type="button"
-                      data-row-index={entry.rowIndex}
-                      className={`change-item change-item--${entry.kind}${
-                        activeSectionStartRow === entry.rowIndex
-                          ? ' change-item--active'
-                          : ''
-                      }`}
-                      onClick={() => onSelectSection(entry.rowIndex)}
-                      title={`Jump to ${KIND_LABELS[entry.kind].toLowerCase()} change section`}
-                      aria-current={
-                        activeSectionStartRow === entry.rowIndex
-                          ? 'true'
-                          : undefined
-                      }
-                      aria-label={`Section ${i + 1}: ${KIND_LABELS[entry.kind]}, ${formatLocation(entry)}, ${entry.count} changed ${entry.count === 1 ? 'row' : 'rows'}`}
-                    >
-                      <span className="change-item__idx">§{i + 1}</span>
-                      <span className="change-item__loc">
-                        {formatLocation(entry)}
-                      </span>
-                      <span className="change-item__kind">
-                        {KIND_LABELS[entry.kind]}
-                        {entry.count > 1 && ` ×${entry.count}`}
-                      </span>
-                    </button>
-                  ))}
+                  {sections.map((entry, i) => {
+                    const label = sectionLabel(entry);
+                    return (
+                      <div
+                        key={entry.rowIndex}
+                        className={`change-item-row${
+                          entry.moveRole
+                            ? ` change-item-row--moved-${entry.moveRole}`
+                            : ''
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          data-row-index={entry.rowIndex}
+                          data-move-role={entry.moveRole}
+                          className={`change-item change-item--${entry.kind}${
+                            entry.moveRole
+                              ? ` change-item--moved-${entry.moveRole}`
+                              : ''
+                          }${
+                            activeSectionStartRow === entry.rowIndex
+                              ? ' change-item--active'
+                              : ''
+                          }`}
+                          onClick={() => onSelectSection(entry.rowIndex)}
+                          title={`Jump to ${label.toLowerCase()} section`}
+                          aria-current={
+                            activeSectionStartRow === entry.rowIndex
+                              ? 'true'
+                              : undefined
+                          }
+                          aria-label={`Section ${i + 1}: ${label}, ${formatLocation(entry)}, ${entry.count} changed ${entry.count === 1 ? 'row' : 'rows'}${
+                            entry.moveSimilarity != null
+                              ? `, ${entry.moveExact ? 'exact match' : `${Math.round(entry.moveSimilarity * 100)} percent similar`}`
+                              : ''
+                          }`}
+                        >
+                          <span className="change-item__idx">§{i + 1}</span>
+                          <span className="change-item__loc">
+                            {formatLocation(entry)}
+                          </span>
+                          <span className="change-item__kind">
+                            {label}
+                            {entry.count > 1 && ` ×${entry.count}`}
+                          </span>
+                        </button>
+                        {entry.movePeerRowIndex != null && (
+                          <button
+                            type="button"
+                            className="move-pair-btn"
+                            onClick={() => onJumpToMovePair(entry.rowIndex)}
+                            title="Jump to paired moved section"
+                            aria-label={`Jump to paired moved section for section ${i + 1}`}
+                          >
+                            Pair ↔
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
                   {hiddenSections > 0 && (
                     <span className="changes-more">
                       +{hiddenSections.toLocaleString()} more sections not listed

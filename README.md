@@ -15,6 +15,7 @@ with all diff computation happening in a Web Worker.
 - Landing screen with dual input panels; once a diff exists, sources collapse
   into an "Edit sources" drawer
 - Change-section outline — navigate contiguous edit hunks instead of stepping line by line
+- Bounded moved-block detection with paired-location navigation and ambiguity-safe matching
 - Difference minimap gutter with pointer and keyboard navigation
 - Paste text, open files (up to 10 MB), or drag & drop
 - Ignore case / whitespace / line endings (CRLF) plus ordered literal/regex custom ignore rules

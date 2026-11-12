@@ -529,6 +529,72 @@ check('search matches highlighted', matchesCount > 0, `matches=${matchesCount}`)
 await page.locator('.diff-search-clear').click();
 await page.getByRole('button', { name: 'Close', exact: true }).click();
 
+// moved-block detection and navigation
+await page.getByRole('button', { name: 'New diff' }).click();
+await page.waitForSelector('.main--landing');
+const moveOld = [
+  'header',
+  'moved alpha line with unique payload',
+  'moved beta line with unique payload',
+  'anchor one',
+  'anchor two',
+  'anchor three',
+  'anchor four',
+  'anchor five',
+  'footer',
+  '',
+].join('\n');
+const moveNew = [
+  'header',
+  'anchor one',
+  'anchor two',
+  'anchor three',
+  'anchor four',
+  'anchor five',
+  'footer',
+  'moved alpha line with unique payload',
+  'moved beta line with unique payload',
+  '',
+].join('\n');
+await page.locator('.input-panel--left textarea').fill(moveOld);
+await page.locator('.input-panel--right textarea').fill(moveNew);
+await page.waitForSelector('.diff-row--moved-from', { timeout: 5000 });
+check(
+  'moved block gets distinct from/to rows',
+  (await page.locator('.diff-row--moved-from').count()) >= 2 &&
+    (await page.locator('.diff-row--moved-to').count()) >= 2,
+);
+check(
+  'moved row has accessible description',
+  (await page.locator('.diff-row--moved-from').first().getAttribute('aria-label'))?.includes(
+    'Moved from here',
+  ),
+);
+await ensureSidebarOpen();
+check(
+  'moved-only navigation is available',
+  (await page.getByRole('group', { name: 'Moved section navigation' }).count()) === 1,
+);
+const firstMovedItem = page.locator('.change-item[data-move-role]').first();
+await firstMovedItem.click();
+const firstMovedRole = await firstMovedItem.getAttribute('data-move-role');
+await page.getByRole('button', { name: /Jump to paired moved section/ }).first().click();
+await page.waitForTimeout(250);
+const pairedActiveRole = await page
+  .locator('.change-item--active')
+  .getAttribute('data-move-role');
+check(
+  'paired move link jumps to opposite location',
+  !!firstMovedRole && !!pairedActiveRole && firstMovedRole !== pairedActiveRole,
+  `${firstMovedRole} → ${pairedActiveRole}`,
+);
+await page.getByRole('button', { name: 'Next moved section' }).click();
+await page.waitForTimeout(200);
+check(
+  'next moved navigation keeps a moved section active',
+  (await page.locator('.change-item--active[data-move-role]').count()) === 1,
+);
+
 // custom ignore rules + Smart precision
 await editSources();
 await ta.fill('2026-11-12T10:00:00Z request ready\n');

@@ -733,6 +733,14 @@ export default function App() {
     [changeSections],
   );
 
+  const movedSections = useMemo(
+    () =>
+      changeSections.filter(
+        (section) => section.moveId != null && section.moveRole != null,
+      ),
+    [changeSections],
+  );
+
   const ordinalBySectionStart = useMemo(() => {
     const map = new Map<number, number>();
     changeSections.forEach((section, index) => map.set(section.rowIndex, index));
@@ -777,6 +785,57 @@ export default function App() {
           changeSections.length;
     activateSection(previousIndex);
   }, [activateSection, changeSections.length, currentChangeIndex]);
+
+  const currentMovedSectionIndex = useMemo(() => {
+    if (currentChangeIndex == null) return null;
+    const current = changeSections[currentChangeIndex];
+    if (!current) return null;
+    const index = movedSections.findIndex(
+      (section) => section.rowIndex === current.rowIndex,
+    );
+    return index >= 0 ? index : null;
+  }, [changeSections, currentChangeIndex, movedSections]);
+
+  const activateMovedSection = useCallback(
+    (index: number) => {
+      const section = movedSections[index];
+      if (!section) return;
+      const changeIndex = ordinalBySectionStart.get(section.rowIndex);
+      if (changeIndex != null) activateSection(changeIndex);
+    },
+    [activateSection, movedSections, ordinalBySectionStart],
+  );
+
+  const handleNextMovedSection = useCallback(() => {
+    if (movedSections.length === 0) return;
+    const next =
+      currentMovedSectionIndex == null
+        ? 0
+        : (currentMovedSectionIndex + 1) % movedSections.length;
+    activateMovedSection(next);
+  }, [activateMovedSection, currentMovedSectionIndex, movedSections.length]);
+
+  const handlePrevMovedSection = useCallback(() => {
+    if (movedSections.length === 0) return;
+    const previous =
+      currentMovedSectionIndex == null
+        ? movedSections.length - 1
+        : (currentMovedSectionIndex - 1 + movedSections.length) %
+          movedSections.length;
+    activateMovedSection(previous);
+  }, [activateMovedSection, currentMovedSectionIndex, movedSections.length]);
+
+  const handleJumpToMovePair = useCallback(
+    (rowIndex: number) => {
+      const sectionIndex = ordinalBySectionStart.get(rowIndex);
+      const peerRowIndex =
+        sectionIndex == null
+          ? null
+          : changeSections[sectionIndex]?.movePeerRowIndex;
+      if (peerRowIndex != null) handleSelectChange(peerRowIndex);
+    },
+    [changeSections, handleSelectChange, ordinalBySectionStart],
+  );
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -981,6 +1040,11 @@ export default function App() {
               currentSectionIndex={currentChangeIndex}
               onNextSection={handleNextChange}
               onPrevSection={handlePrevChange}
+              totalMovedSections={movedSections.length}
+              currentMovedSectionIndex={currentMovedSectionIndex}
+              onNextMovedSection={handleNextMovedSection}
+              onPrevMovedSection={handlePrevMovedSection}
+              onJumpToMovePair={handleJumpToMovePair}
               sections={listedSections}
               hiddenSections={changeSections.length - listedSections.length}
               activeSectionStartRow={activeChangeRowIndex}

@@ -201,18 +201,28 @@ function useVirtualWindow<T>(
 
 function describeDiffRow(row: DiffRow): string {
   const kind =
-    row.kind === 'added'
-      ? 'Added'
-      : row.kind === 'deleted'
-        ? 'Removed'
-        : row.kind === 'modified'
-          ? 'Modified'
-          : 'Unchanged';
+    row.moveRole === 'from'
+      ? 'Moved from here'
+      : row.moveRole === 'to'
+        ? 'Moved to here'
+        : row.kind === 'added'
+          ? 'Added'
+          : row.kind === 'deleted'
+            ? 'Removed'
+            : row.kind === 'modified'
+              ? 'Modified'
+              : 'Unchanged';
   const locations = [
     row.oldNum != null ? `original line ${row.oldNum}` : null,
     row.newNum != null ? `changed line ${row.newNum}` : null,
   ].filter(Boolean);
-  return locations.length > 0 ? `${kind}, ${locations.join(', ')}` : kind;
+  const confidence =
+    row.moveRole && row.moveSimilarity != null
+      ? row.moveExact
+        ? 'exact moved match'
+        : `${Math.round(row.moveSimilarity * 100)} percent moved match`
+      : null;
+  return [kind, ...locations, confidence].filter(Boolean).join(', ');
 }
 
 function describeInlineRow(
@@ -222,15 +232,31 @@ function describeInlineRow(
   newNum: number | null,
 ): string {
   const kind =
-    sign === '+'
-      ? 'Added'
-      : sign === '-'
-        ? 'Removed'
-        : row.kind === 'equal'
-          ? 'Unchanged'
-          : 'Changed';
+    row.moveRole === 'from'
+      ? 'Moved from here'
+      : row.moveRole === 'to'
+        ? 'Moved to here'
+        : sign === '+'
+          ? 'Added'
+          : sign === '-'
+            ? 'Removed'
+            : row.kind === 'equal'
+              ? 'Unchanged'
+              : 'Changed';
   const lineNumber = newNum ?? oldNum;
-  return lineNumber == null ? kind : `${kind}, line ${lineNumber}`;
+  const confidence =
+    row.moveRole && row.moveSimilarity != null
+      ? row.moveExact
+        ? 'exact moved match'
+        : `${Math.round(row.moveSimilarity * 100)} percent moved match`
+      : null;
+  return [
+    kind,
+    lineNumber == null ? null : `line ${lineNumber}`,
+    confidence,
+  ]
+    .filter(Boolean)
+    .join(', ');
 }
 
 function focusDiffRow(id: string): () => void {
@@ -514,7 +540,10 @@ function MinimapGutter({
         if (row.kind !== 'equal' && row.kind !== 'gap') {
           const bucket = Math.floor((i / Math.max(1, total)) * 200);
           if (!buckets.has(bucket)) {
-            buckets.set(bucket, { index: i, kind: row.kind as string });
+            buckets.set(bucket, {
+              index: i,
+              kind: row.moveRole ? `moved-${row.moveRole}` : (row.kind as string),
+            });
           }
         }
       });
@@ -745,7 +774,9 @@ function SideBySide({
                   row.kind === 'equal' ? undefined : describeDiffRow(row)
                 }
                 data-diff-row-index={i}
-                className={`diff-row diff-row--${row.kind} ${
+                className={`diff-row diff-row--${row.kind}${
+                  row.moveRole ? ` diff-row--moved-${row.moveRole}` : ''
+                } ${
                   activeChangeRowIndex != null &&
                   i >= activeChangeRowIndex &&
                   i <= (activeChangeEndRowIndex ?? activeChangeRowIndex)
@@ -973,7 +1004,9 @@ function InlineView({
                     : describeInlineRow(row, sign, oldNum, newNum)
                 }
                 data-diff-row-index={parentRowIndex}
-                className={`diff-row diff-row--${kind} ${
+                className={`diff-row diff-row--${kind}${
+                  row.moveRole ? ` diff-row--moved-${row.moveRole}` : ''
+                } ${
                   activeChangeRowIndex != null &&
                   parentRowIndex >= activeChangeRowIndex &&
                   parentRowIndex <=

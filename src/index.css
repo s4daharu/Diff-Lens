@@ -1126,6 +1126,49 @@ body {
   color: var(--mod-text);
 }
 
+.change-item-row {
+  display: flex;
+  align-items: stretch;
+  gap: 3px;
+}
+
+.change-item-row .change-item {
+  min-width: 0;
+}
+
+.change-item--moved-from,
+.change-item--moved-to {
+  border-left-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.change-item--moved-from .change-item__kind,
+.change-item--moved-to .change-item__kind,
+.diff-nav-label--moved {
+  color: var(--accent);
+}
+
+.move-pair-btn {
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  font-size: 10.5px;
+  font-weight: 750;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-elev));
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.move-pair-btn:hover,
+.move-pair-btn:focus-visible {
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-elev));
+}
+
+.diff-nav-group--moved {
+  margin-top: 6px;
+}
+
 .changes-more {
   font-size: 11.5px;
   color: var(--text-muted);
@@ -1696,6 +1739,11 @@ body {
   background: var(--mod-text);
 }
 
+.minimap-marker--moved-from,
+.minimap-marker--moved-to {
+  background: var(--accent);
+}
+
 .minimap-marker--selected {
   outline: 1px solid var(--text);
   outline-offset: 1px;
@@ -1739,6 +1787,23 @@ body {
   background: var(--mod-bg-strong);
   color: var(--mod-text);
   font-weight: 700;
+}
+
+.diff-row--moved-from,
+.diff-row--moved-to {
+  box-shadow: inset 3px 0 0 var(--accent);
+  background-image: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--accent) 10%, transparent),
+    transparent 28%
+  );
+}
+
+.diff-row--moved-from .ln,
+.diff-row--moved-from .sign,
+.diff-row--moved-to .ln,
+.diff-row--moved-to .sign {
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 70%, transparent);
 }
 
 /* intra-line highlights */
