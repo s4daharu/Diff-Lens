@@ -4,9 +4,16 @@ import type {
   DiffResult,
   DiffRow,
   DiffStats,
+  Granularity,
   Span,
   TextTransform,
 } from './types';
+import {
+  compileIgnoreRules,
+  maskIgnoredText,
+  maskIgnoredUnits,
+  type CompiledIgnoreRule,
+} from './ignoreRules';
 
 const MAX_CHAR_DIFF_LENGTH = 4000;
 const MAX_WORD_DIFF_LENGTH = 20000;
@@ -50,17 +57,14 @@ interface LineDiffOptions {
   timeout?: number;
 }
 
-/**
- * Line diff that additionally honours `ignoreCase`, which jsdiff only
- * supports on its base `Diff.equals` (used by diffChars/diffWords) but does
- * not expose through the typed options of `diffLines`.
- */
 class CaseAwareLineDiff extends Diff<string, string> {
   private readonly ignoreCase: boolean;
+  private readonly ignoreRules: CompiledIgnoreRule[];
 
-  constructor(ignoreCase: boolean) {
+  constructor(ignoreCase: boolean, ignoreRules: CompiledIgnoreRule[]) {
     super();
     this.ignoreCase = ignoreCase;
+    this.ignoreRules = ignoreRules;
   }
 
   tokenize(value: string, options: LineDiffOptions): string[] {
@@ -85,6 +89,10 @@ class CaseAwareLineDiff extends Diff<string, string> {
   }
 
   equals(left: string, right: string, options: LineDiffOptions): boolean {
+    if (this.ignoreRules.length > 0) {
+      left = maskIgnoredText(left, this.ignoreRules);
+      right = maskIgnoredText(right, this.ignoreRules);
+    }
     if (options.ignoreWhitespace) {
       if (!options.newlineIsToken || !left.includes('\n')) {
         left = left.trim();
@@ -104,24 +112,145 @@ class CaseAwareLineDiff extends Diff<string, string> {
   }
 }
 
+export function chooseSmartGranularity(
+  oldLine: string,
+  newLine: string,
+): Exclude<Granularity, 'smart'> {
+  const combined = `${oldLine} ${newLine}`.trim();
+  const words = combined.match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu) ?? [];
+  const hasWhitespace = /\s/.test(combined);
+  const prosePunctuation = /[.!?][\s"'’”)]|[,;:]\s/.test(combined);
+
+  if (
+    combined.length >= 36 &&
+    words.length >= 6 &&
+    hasWhitespace &&
+    (prosePunctuation || words.length >= 10)
+  ) {
+    return 'words';
+  }
+  return 'chars';
+}
+
+function pushSpan(
+  spans: Span[],
+  text: string,
+  flag?: 'added' | 'removed',
+): void {
+  if (!text) return;
+  const last = spans[spans.length - 1];
+  if (
+    last &&
+    Boolean(last.added) === (flag === 'added') &&
+    Boolean(last.removed) === (flag === 'removed')
+  ) {
+    last.text += text;
+    return;
+  }
+  spans.push({
+    text,
+    ...(flag === 'added' ? { added: true } : {}),
+    ...(flag === 'removed' ? { removed: true } : {}),
+  });
+}
+
+function consumeUnits(
+  units: { raw: string }[],
+  start: number,
+  count: number,
+): string {
+  return units
+    .slice(start, start + count)
+    .map((unit) => unit.raw)
+    .join('');
+}
+
+function maskedIntraLineSpans(
+  oldLine: string,
+  newLine: string,
+  options: DiffOptions,
+  rules: CompiledIgnoreRule[],
+  granularity: Exclude<Granularity, 'smart'>,
+): { oldSpans: Span[]; newSpans: Span[] } {
+  const oldMasked = maskIgnoredUnits(oldLine, rules);
+  const newMasked = maskIgnoredUnits(newLine, rules);
+  const parts =
+    granularity === 'chars'
+      ? diffChars(oldMasked.text, newMasked.text, {
+          ignoreCase: options.ignoreCase,
+        })
+      : diffWordsWithSpace(oldMasked.text, newMasked.text, {
+          ignoreCase: options.ignoreCase,
+        });
+
+  const oldSpans: Span[] = [];
+  const newSpans: Span[] = [];
+  let oldIndex = 0;
+  let newIndex = 0;
+
+  for (const part of parts) {
+    const count = part.value.length;
+    if (part.added) {
+      pushSpan(
+        newSpans,
+        consumeUnits(newMasked.units, newIndex, count),
+        'added',
+      );
+      newIndex += count;
+    } else if (part.removed) {
+      pushSpan(
+        oldSpans,
+        consumeUnits(oldMasked.units, oldIndex, count),
+        'removed',
+      );
+      oldIndex += count;
+    } else {
+      pushSpan(oldSpans, consumeUnits(oldMasked.units, oldIndex, count));
+      pushSpan(newSpans, consumeUnits(newMasked.units, newIndex, count));
+      oldIndex += count;
+      newIndex += count;
+    }
+  }
+
+  return { oldSpans, newSpans };
+}
+
 function intraLineSpans(
   oldLine: string,
   newLine: string,
   options: DiffOptions,
+  rules: CompiledIgnoreRule[],
 ): { oldSpans: Span[]; newSpans: Span[] } {
+  const granularity =
+    options.granularity === 'smart'
+      ? chooseSmartGranularity(oldLine, newLine)
+      : options.granularity;
   const total = oldLine.length + newLine.length;
   const limit =
-    options.granularity === 'chars' ? MAX_CHAR_DIFF_LENGTH : MAX_WORD_DIFF_LENGTH;
+    granularity === 'chars' ? MAX_CHAR_DIFF_LENGTH : MAX_WORD_DIFF_LENGTH;
   if (total > limit) {
     return {
       oldSpans: [{ text: oldLine, removed: true }],
       newSpans: [{ text: newLine, added: true }],
     };
   }
+
+  if (rules.length > 0) {
+    return maskedIntraLineSpans(
+      oldLine,
+      newLine,
+      options,
+      rules,
+      granularity,
+    );
+  }
+
   const parts =
-    options.granularity === 'chars'
+    granularity === 'chars'
       ? diffChars(oldLine, newLine, { ignoreCase: options.ignoreCase })
-      : diffWordsWithSpace(oldLine, newLine, { ignoreCase: options.ignoreCase });
+      : diffWordsWithSpace(oldLine, newLine, {
+          ignoreCase: options.ignoreCase,
+        });
 
   const oldSpans: Span[] = [];
   const newSpans: Span[] = [];
@@ -138,8 +267,18 @@ function intraLineSpans(
   return { oldSpans, newSpans };
 }
 
-function buildRows(parts: Change[], options: DiffOptions): DiffRow[] {
+function buildRows(
+  parts: Change[],
+  options: DiffOptions,
+  rules: CompiledIgnoreRule[],
+  oldText: string,
+  newText: string,
+): DiffRow[] {
   const rows: DiffRow[] = [];
+  const originalOldLines = splitLines(oldText);
+  const originalNewLines = splitLines(newText);
+  let oldIndex = 0;
+  let newIndex = 0;
   let oldNum = 0;
   let newNum = 0;
 
@@ -147,18 +286,25 @@ function buildRows(parts: Change[], options: DiffOptions): DiffRow[] {
     const part = parts[i];
 
     if (part.removed) {
-      const removedLines = splitLines(part.value);
-      let addedLines: string[] = [];
+      const removedCount = splitLines(part.value).length;
+      let addedCount = 0;
       if (i + 1 < parts.length && parts[i + 1].added) {
-        addedLines = splitLines(parts[i + 1].value);
+        addedCount = splitLines(parts[i + 1].value).length;
         i++;
       }
-      const count = Math.max(removedLines.length, addedLines.length);
+      const count = Math.max(removedCount, addedCount);
       for (let k = 0; k < count; k++) {
-        const oldLine = k < removedLines.length ? removedLines[k] : null;
-        const newLine = k < addedLines.length ? addedLines[k] : null;
+        const oldLine =
+          k < removedCount ? (originalOldLines[oldIndex++] ?? '') : null;
+        const newLine =
+          k < addedCount ? (originalNewLines[newIndex++] ?? '') : null;
         if (oldLine !== null && newLine !== null) {
-          const { oldSpans, newSpans } = intraLineSpans(oldLine, newLine, options);
+          const { oldSpans, newSpans } = intraLineSpans(
+            oldLine,
+            newLine,
+            options,
+            rules,
+          );
           rows.push({
             kind: 'modified',
             oldLine,
@@ -189,23 +335,23 @@ function buildRows(parts: Change[], options: DiffOptions): DiffRow[] {
       continue;
     }
 
-    const lines = splitLines(part.value);
+    const count = splitLines(part.value).length;
     if (part.added) {
-      for (const line of lines) {
+      for (let k = 0; k < count; k++) {
         rows.push({
           kind: 'added',
           oldLine: null,
-          newLine: line,
+          newLine: originalNewLines[newIndex++] ?? '',
           oldNum: null,
           newNum: ++newNum,
         });
       }
     } else {
-      for (const line of lines) {
+      for (let k = 0; k < count; k++) {
         rows.push({
           kind: 'equal',
-          oldLine: line,
-          newLine: line,
+          oldLine: originalOldLines[oldIndex++] ?? '',
+          newLine: originalNewLines[newIndex++] ?? '',
           oldNum: ++oldNum,
           newNum: ++newNum,
         });
@@ -349,7 +495,8 @@ export function computeDiff(
 ): DiffResult {
   const start = performance.now();
 
-  const diff = new CaseAwareLineDiff(options.ignoreCase);
+  const rules = compileIgnoreRules(options.ignoreRules ?? []);
+  const diff = new CaseAwareLineDiff(options.ignoreCase, rules);
   const parts = diff.diff(oldText, newText, {
     ignoreWhitespace: options.ignoreWhitespace,
     stripTrailingCr: options.ignoreLineEndings,
@@ -362,7 +509,7 @@ export function computeDiff(
     return { rows: [], stats: null, aborted: true, timeMs };
   }
 
-  const rows = buildRows(parts, options);
+  const rows = buildRows(parts, options, rules, oldText, newText);
 
   let added = 0;
   let removed = 0;

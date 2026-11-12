@@ -4,7 +4,7 @@ import {
   buildUnifiedPatch,
   hasNoNewlineAtEof,
 } from './lib/diffEngine';
-import type { DiffOptions, DiffResult } from './lib/types';
+import { DEFAULT_OPTIONS, type DiffOptions, type DiffResult } from './lib/types';
 
 interface DiffRequest {
   id: number;
@@ -31,10 +31,28 @@ self.onmessage = (e: MessageEvent<DiffRequest>) => {
       self.postMessage({ id, ok: true, result } satisfies DiffResponse);
       return;
     }
-    const patch = buildUnifiedPatch(result.rows, options.context, oldName, newName, {
-      oldNoNewlineAtEof: hasNoNewlineAtEof(oldText),
-      newNoNewlineAtEof: hasNoNewlineAtEof(newText),
-    });
+    const filtersActive =
+      options.ignoreCase ||
+      options.ignoreWhitespace ||
+      options.ignoreLineEndings ||
+      options.ignoreRules.some((rule) => rule.enabled);
+    const patchRows = filtersActive
+      ? computeDiff(oldText, newText, {
+          ...DEFAULT_OPTIONS,
+          context: options.context,
+          granularity: options.granularity,
+        }).rows
+      : result.rows;
+    const patch = buildUnifiedPatch(
+      patchRows,
+      options.context,
+      oldName,
+      newName,
+      {
+        oldNoNewlineAtEof: hasNoNewlineAtEof(oldText),
+        newNoNewlineAtEof: hasNoNewlineAtEof(newText),
+      },
+    );
     self.postMessage({ id, ok: true, result, patch } satisfies DiffResponse);
   } catch (err) {
     self.postMessage({

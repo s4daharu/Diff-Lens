@@ -1,6 +1,13 @@
-export type Granularity = 'chars' | 'words';
+export type Granularity = 'chars' | 'words' | 'smart';
 export type ViewMode = 'side-by-side' | 'inline';
 export type ContextSetting = number | 'all';
+export type IgnoreRuleKind = 'literal' | 'regex';
+
+export interface IgnoreRule {
+  kind: IgnoreRuleKind;
+  pattern: string;
+  enabled: boolean;
+}
 
 export interface DiffOptions {
   ignoreCase: boolean;
@@ -8,6 +15,7 @@ export interface DiffOptions {
   ignoreLineEndings: boolean;
   context: ContextSetting;
   granularity: Granularity;
+  ignoreRules: IgnoreRule[];
 }
 
 export type RowKind = 'equal' | 'added' | 'deleted' | 'modified' | 'gap';
@@ -72,4 +80,5 @@ export const DEFAULT_OPTIONS: DiffOptions = {
   ignoreLineEndings: false,
   context: 'all',
   granularity: 'chars',
+  ignoreRules: [],
 };
