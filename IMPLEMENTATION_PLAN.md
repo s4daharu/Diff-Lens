@@ -109,21 +109,21 @@ Acceptance:
 - A comparison can be saved as a clean PDF through the browser without sending data anywhere.
 - Long diffs paginate without clipped lines or overlapping headers.
 
-### Milestone 5 — Image comparison v1
+### Milestone 5 — Image comparison v1 ✅
 
 Goal: expand DiffLens beyond text while keeping all image processing local.
 
 Scope for v1:
-- [ ] Add an explicit comparison-type selector: Text / Image.
-- [ ] Load PNG, JPEG, and WebP locally with `createImageBitmap`/Canvas.
-- [ ] Provide synchronized side-by-side, slider, fade, subtract, and highlight modes.
-- [ ] Add synchronized zoom/pan for side-by-side viewing.
-- [ ] Add configurable pixel-difference threshold and ignore-alpha option.
-- [ ] Group changed pixels into bounded regions and expose a navigable change list.
-- [ ] Compare basic metadata: dimensions, format, and file size.
-- [ ] Export the visual comparison/highlight result as PNG.
-- [ ] Keep large-image processing off the main thread where practical using OffscreenCanvas/worker support with graceful fallback.
-- [ ] Add browser tests with generated fixtures; do not depend on external image services.
+- [x] Add an explicit comparison-type selector: Text / Image.
+- [x] Load PNG, JPEG, and WebP locally with `createImageBitmap`/Canvas.
+- [x] Provide synchronized side-by-side, slider, fade, subtract, and highlight modes.
+- [x] Add synchronized zoom/pan for side-by-side viewing.
+- [x] Add configurable pixel-difference threshold and ignore-alpha option.
+- [x] Group changed pixels into bounded regions and expose a navigable change list.
+- [x] Compare basic metadata: dimensions, format, and file size.
+- [x] Export the visual comparison/highlight result as PNG.
+- [x] Keep large-image processing off the main thread where practical using OffscreenCanvas/worker support with graceful fallback. Pixel comparison runs in a dedicated worker when supported, with a local Canvas fallback.
+- [x] Add browser tests with generated fixtures; do not depend on external image services.
 
 Deferred from image v1:
 - OCR/text-inside-image comparison.

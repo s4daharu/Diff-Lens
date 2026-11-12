@@ -74,6 +74,49 @@ const openViewOptions = async () => {
   return page.getByRole('menu', { name: 'View options' });
 };
 
+const makeImageFixture = async (
+  variant,
+  mimeType = 'image/png',
+  width = 96,
+  height = 72,
+) => {
+  const bytes = await page.evaluate(
+    async ({ variant, mimeType, width, height }) => {
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, width, height);
+
+      ctx.fillStyle = variant === 'changed' ? '#dc2626' : '#2563eb';
+      ctx.fillRect(8, 8, 24, 18);
+
+      ctx.fillStyle = 'rgba(16, 185, 129, 0.35)';
+      ctx.fillRect(44, 8, 14, 14);
+      if (variant === 'changed') {
+        ctx.clearRect(44, 8, 14, 14);
+        ctx.fillStyle = 'rgba(16, 185, 129, 0.85)';
+        ctx.fillRect(44, 8, 14, 14);
+        ctx.fillStyle = '#7c3aed';
+        ctx.fillRect(66, 46, 16, 12);
+      }
+
+      const blob = await new Promise((resolve, reject) => {
+        canvas.toBlob(
+          (value) =>
+            value ? resolve(value) : reject(new Error('fixture encode failed')),
+          mimeType,
+          mimeType === 'image/jpeg' ? 0.96 : undefined,
+        );
+      });
+      return Array.from(new Uint8Array(await blob.arrayBuffer()));
+    },
+    { variant, mimeType, width, height },
+  );
+  return Buffer.from(bytes);
+};
+
 check('no console/page errors on load', errors.length === 0, errors.join(' | '));
 
 const emptyVisible = await page.locator('.empty').isVisible();
@@ -82,6 +125,233 @@ check('empty state visible initially', emptyVisible);
 // Landing mode shows the input panels directly
 const landingPanels = await page.locator('.input-panel--left textarea').count();
 check('landing mode shows input panels', landingPanels === 1);
+
+// Image comparison v1 uses generated fixtures only; no external image service.
+await page.getByRole('button', { name: 'Image', exact: true }).click();
+await page.waitForSelector('.image-compare:not([hidden])');
+check(
+  'comparison type selector switches to Image',
+  (await page.getByRole('button', { name: 'Image', exact: true }).getAttribute(
+    'aria-pressed',
+  )) === 'true',
+);
+check(
+  'image mode hides text-only session controls',
+  (await page.getByRole('button', { name: 'Open comparison session' }).count()) ===
+    0,
+);
+
+const originalPng = await makeImageFixture('original');
+const changedPng = await makeImageFixture('changed');
+const originalImageChooserPromise = page.waitForEvent('filechooser');
+await page.getByRole('button', { name: 'Open Original image' }).click();
+const originalImageChooser = await originalImageChooserPromise;
+await originalImageChooser.setFiles({
+  name: 'original.png',
+  mimeType: 'image/png',
+  buffer: originalPng,
+});
+const changedImageChooserPromise = page.waitForEvent('filechooser');
+await page.getByRole('button', { name: 'Open Changed image' }).click();
+const changedImageChooser = await changedImageChooserPromise;
+await changedImageChooser.setFiles({
+  name: 'changed.png',
+  mimeType: 'image/png',
+  buffer: changedPng,
+});
+await page.waitForSelector('.image-compare[data-image-processing="worker"]', {
+  timeout: 10000,
+});
+await page.waitForSelector('.image-viewer__busy', {
+  state: 'detached',
+  timeout: 10000,
+});
+check(
+  'image comparison runs in background worker when supported',
+  (await page.locator('.image-compare').getAttribute('data-image-processing')) ===
+    'worker',
+);
+check(
+  'image metadata includes dimensions and format',
+  (await page.locator('.image-source-chip__text').allTextContents())
+    .join('|')
+    .includes('96×72 · PNG'),
+);
+const initialChangedPixels = Number(
+  (await page.locator('.image-diff-stats dd').first().textContent())?.replace(
+    /,/g,
+    '',
+  ),
+);
+check(
+  'image diff finds changed pixels and multiple regions',
+  initialChangedPixels > 0 &&
+    (await page.locator('.image-region-item').count()) >= 2,
+  `pixels=${initialChangedPixels}`,
+);
+
+await page.getByRole('tab', { name: 'Slider' }).click();
+check(
+  'slider mode exposes split control',
+  (await page.getByLabel('Comparison slider position').count()) === 1,
+);
+await page.getByRole('tab', { name: 'Fade' }).click();
+check(
+  'fade mode exposes opacity control',
+  (await page.getByLabel('Changed image opacity').count()) === 1,
+);
+await page.getByRole('tab', { name: 'Subtract' }).click();
+check(
+  'subtract mode uses difference stage',
+  (await page.locator('.image-stage--subtract').count()) === 1,
+);
+await page.getByRole('tab', { name: 'Highlight' }).click();
+check(
+  'highlight mode renders changed-region overlays',
+  (await page.locator('.image-region-box').count()) >= 2,
+);
+await page.getByRole('tab', { name: 'Side by side' }).click();
+
+await page.getByRole('button', { name: 'Zoom in images' }).click();
+const transformsAfterZoom = await page
+  .locator('.image-stage__content')
+  .evaluateAll((nodes) => nodes.map((node) => node.dataset.transform));
+check(
+  'side-by-side zoom stays synchronized',
+  transformsAfterZoom.length === 2 &&
+    transformsAfterZoom[0] === transformsAfterZoom[1] &&
+    transformsAfterZoom[0]?.includes('scale(1.25)'),
+  transformsAfterZoom.join('|'),
+);
+const firstStage = page.locator('.image-stage').first();
+const firstStageBox = await firstStage.boundingBox();
+if (firstStageBox) {
+  await page.mouse.move(
+    firstStageBox.x + firstStageBox.width / 2,
+    firstStageBox.y + firstStageBox.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    firstStageBox.x + firstStageBox.width / 2 + 24,
+    firstStageBox.y + firstStageBox.height / 2 + 18,
+  );
+  await page.mouse.up();
+}
+const transformsAfterPan = await page
+  .locator('.image-stage__content')
+  .evaluateAll((nodes) => nodes.map((node) => node.dataset.transform));
+check(
+  'side-by-side pan stays synchronized',
+  transformsAfterPan.length === 2 &&
+    transformsAfterPan[0] === transformsAfterPan[1] &&
+    transformsAfterPan[0] !== transformsAfterZoom[0],
+  transformsAfterPan.join('|'),
+);
+
+await page.getByRole('button', { name: 'Next changed region' }).click();
+check(
+  'changed-region navigation selects a region',
+  (await page.locator('.image-region-item--active').count()) === 1 &&
+    (await page.locator('.image-region-box--active').count()) >= 1,
+);
+
+const thresholdInput = page.getByLabel('Pixel difference threshold');
+await thresholdInput.fill('255');
+await page.waitForTimeout(350);
+check(
+  'maximum pixel threshold can suppress same-size differences',
+  Number(
+    (await page.locator('.image-diff-stats dd').first().textContent())?.replace(
+      /,/g,
+      '',
+    ),
+  ) === 0,
+);
+await thresholdInput.fill('0');
+await page.waitForTimeout(350);
+const alphaSensitivePixels = Number(
+  (await page.locator('.image-diff-stats dd').first().textContent())?.replace(
+    /,/g,
+    '',
+  ),
+);
+await page.getByLabel('Ignore alpha').check();
+await page.waitForTimeout(350);
+const alphaIgnoredPixels = Number(
+  (await page.locator('.image-diff-stats dd').first().textContent())?.replace(
+    /,/g,
+    '',
+  ),
+);
+check(
+  'ignore-alpha reduces alpha-only differences',
+  alphaIgnoredPixels < alphaSensitivePixels,
+  `${alphaSensitivePixels} → ${alphaIgnoredPixels}`,
+);
+
+const visualDownloadPromise = page.waitForEvent('download');
+await page.getByRole('button', { name: 'Export highlight as PNG' }).click();
+const visualDownload = await visualDownloadPromise;
+const visualPath = await visualDownload.path();
+const visualBytes = readFileSync(visualPath);
+check(
+  'visual diff exports a PNG',
+  visualDownload.suggestedFilename() === 'changed-visual-diff.png' &&
+    visualBytes.subarray(0, 8).equals(
+      Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    ),
+  visualDownload.suggestedFilename(),
+);
+
+const changedWebp = await makeImageFixture('changed', 'image/webp');
+const replaceChangedPromise = page.waitForEvent('filechooser');
+await page.getByRole('button', { name: 'Replace Changed image' }).click();
+const replaceChanged = await replaceChangedPromise;
+await replaceChanged.setFiles({
+  name: 'changed.webp',
+  mimeType: 'image/webp',
+  buffer: changedWebp,
+});
+await page.waitForTimeout(350);
+check(
+  'WebP image replacement is supported',
+  (await page.locator('.image-source-chip__text').allTextContents())
+    .join('|')
+    .includes('WebP'),
+);
+
+const originalJpeg = await makeImageFixture('original', 'image/jpeg');
+const replaceOriginalPromise = page.waitForEvent('filechooser');
+await page.getByRole('button', { name: 'Replace Original image' }).click();
+const replaceOriginal = await replaceOriginalPromise;
+await replaceOriginal.setFiles({
+  name: 'original.jpg',
+  mimeType: 'image/jpeg',
+  buffer: originalJpeg,
+});
+await page.waitForTimeout(350);
+check(
+  'JPEG image replacement is supported',
+  (await page.locator('.image-source-chip__text').allTextContents())
+    .join('|')
+    .includes('JPEG'),
+);
+
+await page.getByRole('button', { name: 'Text', exact: true }).click();
+check('switching back to Text restores text landing', await page.locator('.main--landing').isVisible());
+await page.getByRole('button', { name: 'Image', exact: true }).click();
+check(
+  'image comparison state survives Text/Image mode switching',
+  await page.locator('.image-compare--ready').isVisible(),
+);
+await page.getByRole('button', { name: 'New diff' }).click();
+await page.waitForTimeout(100);
+check(
+  'New diff clears the active image comparison',
+  (await page.locator('.image-source-picker').count()) === 2 &&
+    (await page.locator('.image-compare--ready').count()) === 0,
+);
+await page.getByRole('button', { name: 'Text', exact: true }).click();
 
 // Loading only one source must keep the user in the source-entry workspace.
 const leftChooserPromise = page.waitForEvent('filechooser');
