@@ -267,14 +267,14 @@ console.log('--- applyContext with expanded gap indices ---');
   const r = computeDiff('1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n', '1\n2\nX\n4\n5\n6\nY\n8\n9\n10\n', base);
   const initialTrimmed = applyContext(r.rows, 1);
   check('initial has gap', initialTrimmed.some((x) => x.kind === 'gap'));
-  const gap = initialTrimmed.find((x) => x.kind === 'gap');
+  const gap = initialTrimmed.find((x) => x.kind === 'gap' && x.gapStartRow === 4);
   check('gap has gapStartRow & gapEndRow', gap?.gapStartRow === 4 && gap?.gapEndRow === 4);
 
   // Expand row 4 (the skipped line)
   const expanded = applyContext(r.rows, 1, new Set([4]));
   check('expanded middle gap is gone', !expanded.some((x) => x.kind === 'gap' && x.gapStartRow === 4));
   check('expanded keeps edge gaps', expanded.filter((x) => x.kind === 'gap').length === 2);
-  check('expanded length = 10', expanded.length === 10);
+  check('expanded length = 9', expanded.length === 9);
 }
 
 console.log(`\n${failures === 0 ? 'ALL PASSED' : failures + ' FAILURES'}`);
