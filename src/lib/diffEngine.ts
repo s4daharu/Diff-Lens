@@ -66,10 +66,10 @@ class CaseAwareLineDiff extends Diff<string, string> {
   tokenize(value: string, options: LineDiffOptions): string[] {
     let normalized = value;
     if (options.stripTrailingCr) {
-      normalized = normalized.replace(/\r\n/g, '\n');
+      normalized = normalized.replace(/\r\n?/g, '\n');
     }
     const ret: string[] = [];
-    const linesAndNewlines = normalized.split(/(\n|\r\n)/);
+    const linesAndNewlines = normalized.split(/(\r\n|\n|\r)/);
     if (!linesAndNewlines[linesAndNewlines.length - 1]) {
       linesAndNewlines.pop();
     }
@@ -303,6 +303,13 @@ export function applyContext(
   let lastKept = -2;
   for (let k = 0; k < rows.length; k++) {
     if (keep.has(k)) {
+      if (lastKept === -2 && k > 0) {
+        out.push({
+          kind: 'gap', oldLine: null, newLine: null,
+          oldNum: null, newNum: null, skipped: k,
+          gapStartRow: 0, gapEndRow: k - 1,
+        });
+      }
       if (lastKept === -2 || lastKept === k - 1) {
         out.push(rows[k]);
       } else {
@@ -323,6 +330,14 @@ export function applyContext(
       }
       lastKept = k;
     }
+  }
+  if (lastKept >= 0 && lastKept < rows.length - 1) {
+    out.push({
+      kind: 'gap', oldLine: null, newLine: null,
+      oldNum: null, newNum: null,
+      skipped: rows.length - lastKept - 1,
+      gapStartRow: lastKept + 1, gapEndRow: rows.length - 1,
+    });
   }
   return out;
 }

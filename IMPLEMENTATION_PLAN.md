@@ -1,0 +1,18 @@
+# Implementation roadmap
+
+DiffLens is a client-side text comparison app; all user text stays in the browser.
+
+## Completed
+- [x] Dual-input workspace, side-by-side and inline views, search, navigation, collapse/expand, and exports.
+- [x] Background diff calculation with stale-result protection.
+- [x] Unit tests and Playwright browser smoke tests.
+- [x] Handle CR-only and mixed line endings consistently, and make leading/trailing hidden context expandable.
+- [x] Run lint, diff-engine regression tests, production build and Chromium smoke tests in GitHub Actions on pushes and pull requests.
+
+## Next milestones
+- [ ] Add browser tests for file upload, drag-and-drop, and keyboard-only navigation.
+- [ ] Assess large-input performance and virtualize long diff views instead of truncating them.
+- [ ] Strengthen accessible descriptions and focus behavior for diff rows, minimap, and editor drawer.
+- [ ] Add optional import/export of named comparison sessions without sending data to a server.
+
+Before closing any milestone, run `npm run lint`, `npm run test`, `npm run build`, and `npm run test:e2e`.

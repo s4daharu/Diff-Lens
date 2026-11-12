@@ -120,7 +120,7 @@ console.log('--- context trimming ---');
   check('gap present', trimmed.some((x) => x.kind === 'gap'), kinds);
   const gap = trimmed.find((x) => x.kind === 'gap');
   check('gap skipped=1', gap?.skipped === 1, gap);
-  check('kept rows = 7 (6 + gap)', trimmed.length === 7, trimmed.length);
+  check('kept rows = 9 (6 + three gaps)', trimmed.length === 9, trimmed.length);
 }
 
 console.log('--- unified patch ---');
@@ -272,11 +272,38 @@ console.log('--- applyContext with expanded gap indices ---');
 
   // Expand row 4 (the skipped line)
   const expanded = applyContext(r.rows, 1, new Set([4]));
-  check('expanded has no gap', !expanded.some((x) => x.kind === 'gap'));
-  check('expanded length = 7', expanded.length === 7);
+  check('expanded middle gap is gone', !expanded.some((x) => x.kind === 'gap' && x.gapStartRow === 4));
+  check('expanded keeps edge gaps', expanded.filter((x) => x.kind === 'gap').length === 2);
+  check('expanded length = 10', expanded.length === 10);
 }
 
 console.log(`\n${failures === 0 ? 'ALL PASSED' : failures + ' FAILURES'}`);
+console.log('--- CR-only and mixed line endings ---');
+{
+  const oldText = 'alpha\rbeta\rgamma\r';
+  const newText = 'alpha\rBETA\rgamma\r';
+  const r = computeDiff(oldText, newText, base);
+  check('CR-only produces three numbered rows', r.rows.length === 3 && r.stats?.oldLines === 3 && r.stats?.newLines === 3, r.rows);
+  check('CR-only isolates the modified line', r.stats?.changed === 1 && r.rows[1]?.oldLine === 'beta' && r.rows[1]?.newLine === 'BETA', r.rows);
+  const normalized = computeDiff('one\rtwo\rthree\r', 'one\ntwo\nthree\n', { ...base, ignoreLineEndings: true });
+  check('ignore line endings normalizes bare CR', normalized.stats?.unchanged === 3 && normalized.stats?.changed === 0, normalized.stats);
+  const mixed = computeDiff('a\r\nb\rc\n', 'a\nb\nc\n', { ...base, ignoreLineEndings: true });
+  check('ignore line endings normalizes mixed endings', mixed.stats?.unchanged === 3, mixed.stats);
+}
+
+console.log('--- context gaps at file boundaries ---');
+{
+  const oldText = 'top\nsecond\nmiddle\nfourth\nbottom\n';
+  const newText = 'top\nsecond\nCHANGED\nfourth\nbottom\n';
+  const r = computeDiff(oldText, newText, base);
+  const trimmed = applyContext(r.rows, 0);
+  check('leading gap visible', trimmed[0]?.kind === 'gap' && trimmed[0].skipped === 2 && trimmed[0].gapStartRow === 0 && trimmed[0].gapEndRow === 1, trimmed);
+  check('trailing gap visible', trimmed[2]?.kind === 'gap' && trimmed[2].skipped === 2 && trimmed[2].gapStartRow === 3 && trimmed[2].gapEndRow === 4, trimmed);
+  check('context-zero patch still applies', applyPatch(oldText, buildUnifiedPatch(r.rows, 0)) === newText);
+  const expanded = applyContext(r.rows, 0, new Set([0, 1, 3, 4]));
+  check('all boundary gaps can expand', expanded.length === 5 && expanded.every((row) => row.kind !== 'gap'), expanded);
+}
+
 console.log('--- patch round-trip ---');
 {
   const cases = [
