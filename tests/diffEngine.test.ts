@@ -22,6 +22,11 @@ import {
   summarizeHiddenContext,
 } from '../src/lib/report';
 import {
+  IMAGE_TILE_SIZE,
+  MAX_IMAGE_REGIONS,
+  comparePixelBuffers,
+} from '../src/lib/imageDiff';
+import {
   MAX_MOVE_COMPARISONS,
   detectMovedBlocks,
 } from '../src/lib/movedBlocks';
@@ -813,6 +818,85 @@ console.log('--- printable report metadata ---');
     'report summarizes collapsed unchanged context',
     hidden.gapCount > 0 && hidden.hiddenLines > 0,
     hidden,
+  );
+}
+
+console.log('--- image diff engine ---');
+{
+  const pixels = (
+    width: number,
+    height: number,
+    fill: [number, number, number, number],
+  ) => {
+    const data = new Uint8ClampedArray(width * height * 4);
+    for (let index = 0; index < width * height; index++) {
+      data.set(fill, index * 4);
+    }
+    return { data, width, height };
+  };
+
+  const original = pixels(4, 4, [255, 255, 255, 255]);
+  const changed = pixels(4, 4, [255, 255, 255, 255]);
+  changed.data.set([240, 20, 20, 255], (1 * 4 + 1) * 4);
+  changed.data.set([240, 20, 20, 255], (1 * 4 + 2) * 4);
+  const diff = comparePixelBuffers(original, changed, 10, false);
+  check('image diff counts changed pixels', diff.changedPixels === 2, diff);
+  check(
+    'nearby changed pixels form one region',
+    diff.regions.length === 1 &&
+      diff.regions[0]?.x === 1 &&
+      diff.regions[0]?.y === 1 &&
+      diff.regions[0]?.width === 2,
+    diff.regions,
+  );
+  check(
+    'image diff mask marks changed pixels',
+    diff.mask[5] === 255 && diff.mask[6] === 255 && diff.mask[0] === 0,
+  );
+
+  const tolerant = pixels(1, 1, [100, 100, 100, 255]);
+  const tolerantChanged = pixels(1, 1, [108, 100, 100, 255]);
+  check(
+    'pixel threshold ignores changes at or below threshold',
+    comparePixelBuffers(tolerant, tolerantChanged, 8, false).changedPixels === 0,
+  );
+  check(
+    'pixel threshold detects changes above threshold',
+    comparePixelBuffers(tolerant, tolerantChanged, 7, false).changedPixels === 1,
+  );
+
+  const alphaA = pixels(1, 1, [20, 40, 60, 40]);
+  const alphaB = pixels(1, 1, [20, 40, 60, 220]);
+  check(
+    'alpha differences are detected by default',
+    comparePixelBuffers(alphaA, alphaB, 0, false).changedPixels === 1,
+  );
+  check(
+    'ignore alpha suppresses alpha-only differences',
+    comparePixelBuffers(alphaA, alphaB, 0, true).changedPixels === 0,
+  );
+
+  const smaller = pixels(1, 1, [0, 0, 0, 255]);
+  const larger = pixels(2, 1, [0, 0, 0, 255]);
+  check(
+    'dimension mismatch counts out-of-bounds pixels as changed',
+    comparePixelBuffers(smaller, larger, 255, true).changedPixels === 1,
+  );
+
+  const separatedWidth = IMAGE_TILE_SIZE * (MAX_IMAGE_REGIONS * 2 + 1);
+  const separatedA = pixels(separatedWidth, 1, [0, 0, 0, 255]);
+  const separatedB = pixels(separatedWidth, 1, [0, 0, 0, 255]);
+  for (let region = 0; region < MAX_IMAGE_REGIONS + 5; region++) {
+    const x = region * IMAGE_TILE_SIZE * 2;
+    separatedB.data.set([255, 255, 255, 255], x * 4);
+  }
+  const bounded = comparePixelBuffers(separatedA, separatedB, 0, false);
+  check(
+    'image region list is bounded',
+    bounded.regions.length === MAX_IMAGE_REGIONS &&
+      bounded.totalRegions === MAX_IMAGE_REGIONS + 5 &&
+      bounded.regionsTruncated,
+    { listed: bounded.regions.length, total: bounded.totalRegions },
   );
 }
 
