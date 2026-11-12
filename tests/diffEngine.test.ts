@@ -883,7 +883,8 @@ console.log('--- image diff engine ---');
     comparePixelBuffers(smaller, larger, 255, true).changedPixels === 1,
   );
 
-  const separatedWidth = IMAGE_TILE_SIZE * (MAX_IMAGE_REGIONS * 2 + 1);
+  const separatedWidth =
+    IMAGE_TILE_SIZE * (MAX_IMAGE_REGIONS + 5) * 2;
   const separatedA = pixels(separatedWidth, 1, [0, 0, 0, 255]);
   const separatedB = pixels(separatedWidth, 1, [0, 0, 0, 255]);
   for (let region = 0; region < MAX_IMAGE_REGIONS + 5; region++) {
