@@ -44,7 +44,16 @@ page.on('console', (m) => {
 
 await page.goto(`http://localhost:${PORT}/`, { waitUntil: 'networkidle' });
 
+const ensureSidebarOpen = async () => {
+  const button = page.getByRole('button', { name: 'Diff details' });
+  if ((await button.getAttribute('aria-expanded')) !== 'true') {
+    await button.click();
+    await page.waitForSelector('.diff-sidebar');
+  }
+};
+
 const openSidebarOptions = async () => {
+  await ensureSidebarOpen();
   const details = page.locator('.sidebar-options');
   if ((await details.getAttribute('open')) === null) {
     await details.locator('summary').click();
@@ -68,13 +77,46 @@ check('empty state visible initially', emptyVisible);
 const landingPanels = await page.locator('.input-panel--left textarea').count();
 check('landing mode shows input panels', landingPanels === 1);
 
+// Loading only one source must keep the user in the source-entry workspace.
+const leftChooserPromise = page.waitForEvent('filechooser');
+await page.locator('.input-panel--left').getByRole('button', { name: 'Open file' }).click();
+const leftChooser = await leftChooserPromise;
+await leftChooser.setFiles({
+  name: 'only-left.txt',
+  mimeType: 'text/plain',
+  buffer: Buffer.from('left source\n'),
+});
+await page.waitForTimeout(300);
+check('one uploaded source stays on landing', await page.locator('.main--landing').isVisible());
+check('one uploaded source does not open viewer', (await page.locator('.diff-view').count()) === 0);
+
+const rightChooserPromise = page.waitForEvent('filechooser');
+await page.locator('.input-panel--right').getByRole('button', { name: 'Open file' }).click();
+const rightChooser = await rightChooserPromise;
+await rightChooser.setFiles({
+  name: 'right.txt',
+  mimeType: 'text/plain',
+  buffer: Buffer.from('right source\n'),
+});
+await page.waitForSelector('.diff-view--side', { timeout: 5000 });
+check('viewer opens after both sources are ready', true);
+await page.getByRole('button', { name: 'New diff' }).click();
+await page.waitForSelector('.main--landing');
+
 await page.getByRole('button', { name: 'Try with sample text' }).click();
 await page.waitForSelector('.diff-view--side', { timeout: 5000 });
 
-// Workspace mode: sources bar + sidebar + toolbar + diff canvas
+// Workspace mode: sources bar + toolbar + diff canvas. Details stay hidden
+// until explicitly requested so the diff gets the full desktop width.
 check('sources bar visible', await page.locator('.sources-bar').isVisible());
-check('sidebar visible', await page.locator('.diff-sidebar').isVisible());
+check('sidebar hidden by default', (await page.locator('.diff-sidebar').count()) === 0);
+check(
+  'details toggle starts collapsed',
+  (await page.getByRole('button', { name: 'Diff details' }).getAttribute('aria-expanded')) === 'false',
+);
 check('toolbar visible', await page.locator('.diff-toolbar').isVisible());
+await ensureSidebarOpen();
+check('sidebar opens on demand', await page.locator('.diff-sidebar').isVisible());
 
 const viewMenu = await openViewOptions();
 check(
@@ -113,11 +155,11 @@ check('intra-line highlights render', hlCount > 0, `hl=${hlCount}`);
 
 // change outline list in the sidebar
 const changeItems = await page.locator('.change-item').count();
-check('change outline list renders', changeItems > 3, `items=${changeItems}`);
+check('change section outline renders', changeItems > 0, `sections=${changeItems}`);
 await page.locator('.change-item').first().click();
 await page.waitForTimeout(300);
 const activeRow = await page.locator('.diff-row--active').count();
-check('outline click jumps to change', activeRow === 1);
+check('section click highlights its changed rows', activeRow >= 1);
 
 // toggle inline view
 await page.getByRole('tab', { name: 'Inline' }).click();
@@ -241,6 +283,7 @@ check(
   '2000-line diff is virtualized',
   (await page.locator('.diff-view--side').getAttribute('data-virtualized')) === 'true',
 );
+await ensureSidebarOpen();
 await page.locator('.change-item').first().click();
 await page.waitForSelector('.diff-row--modified.diff-row--active', { timeout: 5000 });
 check(
@@ -418,15 +461,15 @@ check(
 await page.getByLabel('Context lines').selectOption('all');
 await page.waitForTimeout(600);
 const navLabel = await page.locator('.diff-nav-label').textContent();
-check('diff nav displays change count', !!navLabel && navLabel.includes('change'), navLabel);
-await page.getByTitle('Next difference (Alt+N or Alt+Down)').click();
+check('diff nav displays section count', !!navLabel && navLabel.includes('section'), navLabel);
+await page.getByTitle('Next change section (Alt+N or Alt+Down)').click();
 await page.waitForTimeout(300);
 const navLabelAfter = await page.locator('.diff-nav-label').textContent();
-check('nav next updates change index', !!navLabelAfter && navLabelAfter.includes('1 of'), navLabelAfter);
+check('nav next updates section index', !!navLabelAfter && navLabelAfter.includes('1 of'), navLabelAfter);
 const activeRowNav = await page.locator('.diff-row--active').count();
-check('active change row highlighted', activeRowNav === 1);
+check('active change section highlighted', activeRowNav >= 1);
 const activeItem = await page.locator('.change-item--active').count();
-check('active outline item highlighted', activeItem === 1);
+check('active section outline item highlighted', activeItem === 1);
 
 // diff search
 await page.getByRole('button', { name: 'Find' }).click();

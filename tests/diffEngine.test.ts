@@ -13,6 +13,7 @@ import {
 import type { DiffOptions } from '../src/lib/types';
 import { applyPatch } from 'diff';
 import { buildVirtualOffsets, findVirtualIndex, getVirtualRange } from '../src/lib/virtualRows';
+import { buildChangeSections } from '../src/lib/changeSections';
 
 const base: DiffOptions = {
   ignoreCase: false,
@@ -303,6 +304,29 @@ console.log('--- context gaps at file boundaries ---');
   check('context-zero patch still applies', applyPatch(oldText, buildUnifiedPatch(r.rows, 0)) === newText);
   const expanded = applyContext(r.rows, 0, new Set([0, 1, 3, 4]));
   check('all boundary gaps can expand', expanded.length === 5 && expanded.every((row) => row.kind !== 'gap'), expanded);
+}
+
+console.log('--- change sections ---');
+{
+  const r = computeDiff(
+    'a\nb\nc\nd\ne\nf\n',
+    'a\nB\nC\nd\ne\nF\n',
+    base,
+  );
+  const sections = buildChangeSections(r.rows);
+  check('contiguous edits form two sections', sections.length === 2, sections);
+  check(
+    'first section spans two changed rows',
+    sections[0]?.count === 2 &&
+      sections[0]?.rowIndex === 1 &&
+      sections[0]?.endRowIndex === 2,
+    sections[0],
+  );
+  check(
+    'second section starts after unchanged lines',
+    sections[1]?.rowIndex === 5 && sections[1]?.count === 1,
+    sections[1],
+  );
 }
 
 console.log('--- virtual row layout ---');

@@ -17,6 +17,7 @@ interface DiffViewProps {
   lineNumbers: boolean;
   searchQuery?: string;
   activeChangeRowIndex?: number | null;
+  activeChangeEndRowIndex?: number | null;
   onExpandGap?: (startRow: number, endRow: number, count: number) => void;
   onCopyNotice?: (msg: string) => void;
   getTokens?: ((line: string) => ThemedToken[] | null) | null;
@@ -543,6 +544,7 @@ function SideBySide({
   lineNumbers,
   searchQuery,
   activeChangeRowIndex,
+  activeChangeEndRowIndex,
   onExpandGap,
   onCopyNotice,
   getTokens,
@@ -608,7 +610,11 @@ function SideBySide({
                 id={`diff-row-side-${i}`}
                 key={i}
                 className={`diff-row diff-row--${row.kind} ${
-                  activeChangeRowIndex === i ? 'diff-row--active' : ''
+                  activeChangeRowIndex != null &&
+                  i >= activeChangeRowIndex &&
+                  i <= (activeChangeEndRowIndex ?? activeChangeRowIndex)
+                    ? 'diff-row--active'
+                    : ''
                 }`}
               >
                 <RowSide
@@ -657,6 +663,7 @@ function InlineView({
   lineNumbers,
   searchQuery,
   activeChangeRowIndex,
+  activeChangeEndRowIndex,
   onExpandGap,
   onCopyNotice,
   getTokens,
@@ -798,7 +805,10 @@ function InlineView({
                 id={`diff-row-inline-p${parentRowIndex}-${subIndex}`}
                 key={i}
                 className={`diff-row diff-row--${kind} ${
-                  activeChangeRowIndex === parentRowIndex
+                  activeChangeRowIndex != null &&
+                  parentRowIndex >= activeChangeRowIndex &&
+                  parentRowIndex <=
+                    (activeChangeEndRowIndex ?? activeChangeRowIndex)
                     ? 'diff-row--active'
                     : ''
                 }`}

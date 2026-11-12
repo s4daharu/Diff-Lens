@@ -7,6 +7,7 @@ import {
   CheckIcon,
   FileCodeIcon,
   HashIcon,
+  ListIcon,
   SearchIcon,
   SlidersIcon,
 } from './Icons';
@@ -22,6 +23,8 @@ interface DiffToolbarProps {
   onHideUnchangedLinesChange: (hidden: boolean) => void;
   lineNumbers: boolean;
   onLineNumbersChange: (show: boolean) => void;
+  sidebarOpen: boolean;
+  onToggleSidebar: () => void;
   searchOpen: boolean;
   onToggleSearch: () => void;
   searchQuery: string;
@@ -46,6 +49,8 @@ export function DiffToolbar({
   onHideUnchangedLinesChange,
   lineNumbers,
   onLineNumbersChange,
+  sidebarOpen,
+  onToggleSidebar,
   searchOpen,
   onToggleSearch,
   searchQuery,
@@ -186,6 +191,19 @@ export function DiffToolbar({
         </div>
 
         <div className="diff-toolbar__group">
+          <button
+            type="button"
+            className="btn btn--small btn--toggle"
+            aria-pressed={sidebarOpen}
+            aria-expanded={sidebarOpen}
+            aria-controls="diff-sidebar"
+            onClick={onToggleSidebar}
+            title={sidebarOpen ? 'Hide diff details' : 'Show diff details'}
+            aria-label="Diff details"
+          >
+            <ListIcon size={14} />
+            <span className="btn__label">Details</span>
+          </button>
           <button
             type="button"
             className="btn btn--small btn--toggle"

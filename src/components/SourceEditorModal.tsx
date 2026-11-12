@@ -13,6 +13,8 @@ interface SourceEditorModalProps {
   newFileName: string | null;
   onFileInfoOld: (name: string | null) => void;
   onFileInfoNew: (name: string | null) => void;
+  onReadyChangeOld: (ready: boolean) => void;
+  onReadyChangeNew: (ready: boolean) => void;
   onError: (message: string) => void;
   onSwap: () => void;
 }
@@ -28,6 +30,8 @@ export function SourceEditorModal({
   newFileName,
   onFileInfoOld,
   onFileInfoNew,
+  onReadyChangeOld,
+  onReadyChangeNew,
   onError,
   onSwap,
 }: SourceEditorModalProps) {
@@ -104,6 +108,7 @@ export function SourceEditorModal({
               onError={onError}
               fileName={oldFileName}
               onFileInfo={onFileInfoOld}
+              onReadyChange={onReadyChangeOld}
             />
             <div className="panels__swap">
               <button
@@ -124,6 +129,7 @@ export function SourceEditorModal({
               onError={onError}
               fileName={newFileName}
               onFileInfo={onFileInfoNew}
+              onReadyChange={onReadyChangeNew}
             />
           </div>
         </div>

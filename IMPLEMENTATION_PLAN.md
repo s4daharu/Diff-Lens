@@ -11,6 +11,7 @@ DiffLens is a client-side text comparison app; all user text stays in the browse
 - [x] Add a consolidated View menu for hiding whitespace changes, hiding unchanged lines while preserving the prior context preference, and controlling line wrap.
 - [x] Add browser coverage for file upload, drag-and-drop, and keyboard navigation.
 - [x] Replace the 12,000-row truncation/render-all flow with measured, overscanned virtualization for large side-by-side and inline diffs; keep off-screen change navigation and lazy syntax highlighting working.
+- [x] Keep source entry visible until both sources are explicitly provided, including empty-file support; collapse desktop details by default; navigate contiguous change sections instead of individual changed rows.
 
 ## Next milestones
 - [ ] Strengthen accessible descriptions and focus behavior for diff rows, minimap, and editor drawer.

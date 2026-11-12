@@ -8,7 +8,6 @@ import { DiffView } from './components/DiffView';
 import { SourceEditorModal } from './components/SourceEditorModal';
 import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal';
 import { LogoIcon, SwapIcon } from './components/Icons';
-import type { ChangeEntry } from './components/DiffSidebar';
 import {
   DEFAULT_OPTIONS,
   type DiffOptions,
@@ -29,6 +28,7 @@ import {
   buildMarkdownDiff,
   hasNoNewlineAtEof,
 } from './lib/diffEngine';
+import { buildChangeSections } from './lib/changeSections';
 import {
   createLineTokenizer,
   detectLang,
@@ -47,7 +47,7 @@ interface WorkerResponse {
 }
 
 const DEBOUNCE_MS = 250;
-const CHANGE_LIST_CAP = 400;
+const SECTION_LIST_CAP = 400;
 
 function usePersistedState<T>(
   key: string,
@@ -132,7 +132,9 @@ export default function App() {
   const [expandedIndices, setExpandedIndices] = useState<Set<number>>(() => new Set());
   const [currentChangeIndex, setCurrentChangeIndex] = useState<number | null>(null);
   const [activeChangeRowIndex, setActiveChangeRowIndex] = useState<number | null>(null);
+  const [activeChangeEndRowIndex, setActiveChangeEndRowIndex] = useState<number | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [syntaxEnabled, setSyntaxEnabled] = usePersistedState(
     storageKeys.syntax,
     true,
@@ -143,6 +145,10 @@ export default function App() {
     old: string | null;
     new: string | null;
   }>({ old: null, new: null });
+  const [sourceReady, setSourceReady] = useState(() => ({
+    old: oldText !== '',
+    new: newText !== '',
+  }));
 
   const workerRef = useRef<Worker | null>(null);
   const seqRef = useRef(0);
@@ -246,7 +252,7 @@ export default function App() {
     };
   }, [syntaxEnabled, syntaxLang, theme]);
   useEffect(() => {
-    if (oldText === '' && newText === '') {
+    if (!sourceReady.old || !sourceReady.new) {
       seqRef.current++;
       setResult(null);
       setPatch(null);
@@ -267,13 +273,14 @@ export default function App() {
       });
     }, DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
-  }, [oldText, newText, options, fileNames, ensureWorker]);
+  }, [oldText, newText, options, fileNames, sourceReady, ensureWorker]);
 
   // Reset expanded gaps when inputs or context settings change
   useEffect(() => {
     setExpandedIndices(new Set());
     setCurrentChangeIndex(null);
     setActiveChangeRowIndex(null);
+    setActiveChangeEndRowIndex(null);
   }, [oldText, newText, options.context]);
 
   useEffect(() => {
@@ -310,8 +317,13 @@ export default function App() {
             ...names,
             [targetLeft ? 'old' : 'new']: file.name,
           }));
-          if (targetLeft) setOldText(text);
-          else setNewText(text);
+          if (targetLeft) {
+            setOldText(text);
+            setSourceReady((ready) => ({ ...ready, old: true }));
+          } else {
+            setNewText(text);
+            setSourceReady((ready) => ({ ...ready, new: true }));
+          }
         })
         .catch(() => showToast(`Could not read "${file.name}".`));
     };
@@ -338,32 +350,37 @@ export default function App() {
   }, [oldText, newText]);
 
   const handleNewDiff = useCallback(() => {
-    const total = oldText.length + newText.length;
+    const hadSources = sourceReady.old || sourceReady.new;
     const prevOld = oldText;
     const prevNew = newText;
     const prevNames = fileNames;
     const prevOptions = options;
+    const prevReady = sourceReady;
     setOldText('');
     setNewText('');
     setOptions(DEFAULT_OPTIONS);
     lastVisibleContextRef.current = DEFAULT_OPTIONS.context;
     setFileNames({ old: null, new: null });
+    setSourceReady({ old: false, new: false });
+    setSidebarOpen(false);
     setExpandedIndices(new Set());
     setCurrentChangeIndex(null);
     setActiveChangeRowIndex(null);
+    setActiveChangeEndRowIndex(null);
     setSearchQuery('');
     setSearchOpen(false);
     setEditorOpen(false);
     save(storageKeys.oldText, '');
     save(storageKeys.newText, '');
     save(storageKeys.options, DEFAULT_OPTIONS);
-    if (total > 0) {
+    if (hadSources) {
       window.clearTimeout(toastTimerRef.current);
       setToast('Cleared');
       const undo = () => {
         setOldText(prevOld);
         setNewText(prevNew);
         setFileNames(prevNames);
+        setSourceReady(prevReady);
         setOptions(prevOptions);
         save(storageKeys.oldText, prevOld);
         save(storageKeys.newText, prevNew);
@@ -380,12 +397,13 @@ export default function App() {
       }, 6000);
       toastTimerRef.current = id;
     }
-  }, [setOptions, oldText, newText, fileNames, options]);
+  }, [setOptions, oldText, newText, fileNames, options, sourceReady]);
 
   const handleLoadSample = useCallback(() => {
     setOldText(SAMPLE_ORIGINAL);
     setNewText(SAMPLE_CHANGED);
     setFileNames({ old: null, new: null });
+    setSourceReady({ old: true, new: true });
     setExpandedIndices(new Set());
   }, []);
 
@@ -393,6 +411,7 @@ export default function App() {
     setOldText(preset.oldText);
     setNewText(preset.newText);
     setFileNames({ old: preset.oldName, new: preset.newName });
+    setSourceReady({ old: true, new: true });
     setExpandedIndices(new Set());
   }, []);
 
@@ -400,6 +419,7 @@ export default function App() {
     setOldText(newText);
     setNewText(oldText);
     setFileNames((names) => ({ old: names.new, new: names.old }));
+    setSourceReady((ready) => ({ old: ready.new, new: ready.old }));
     setExpandedIndices(new Set());
   }, [oldText, newText]);
 
@@ -520,7 +540,8 @@ export default function App() {
     [options, setOptions],
   );
 
-  const hasInput = oldText !== '' || newText !== '';
+  const comparisonReady = sourceReady.old && sourceReady.new;
+  const hasAnySource = sourceReady.old || sourceReady.new;
 
   const identical =
     result?.stats != null &&
@@ -539,68 +560,62 @@ export default function App() {
     [tokenizer],
   );
 
-  // Outline of every change row in the visible diff, for the sidebar list
-  const changeEntries = useMemo<ChangeEntry[]>(() => {
-    const list: ChangeEntry[] = [];
-    visibleRows.forEach((r, idx) => {
-      if (r.kind !== 'equal' && r.kind !== 'gap') {
-        list.push({
-          rowIndex: idx,
-          kind: r.kind,
-          oldNum: r.oldNum,
-          newNum: r.newNum,
-        });
-      }
-    });
-    return list;
-  }, [visibleRows]);
-
-  const listedChanges = useMemo(
-    () => changeEntries.slice(0, CHANGE_LIST_CAP),
-    [changeEntries],
+  // Group contiguous changed rows into sections so navigation moves by hunk,
+  // not line-by-line through a run of related edits.
+  const changeSections = useMemo(
+    () => buildChangeSections(visibleRows),
+    [visibleRows],
   );
 
-  const ordinalByRowIndex = useMemo(() => {
-    const m = new Map<number, number>();
-    changeEntries.forEach((entry, i) => m.set(entry.rowIndex, i));
-    return m;
-  }, [changeEntries]);
+  const listedSections = useMemo(
+    () => changeSections.slice(0, SECTION_LIST_CAP),
+    [changeSections],
+  );
 
-  const changeRowIndices = useMemo(
-    () => changeEntries.map((e) => e.rowIndex),
-    [changeEntries],
+  const ordinalBySectionStart = useMemo(() => {
+    const map = new Map<number, number>();
+    changeSections.forEach((section, index) => map.set(section.rowIndex, index));
+    return map;
+  }, [changeSections]);
+
+  const activateSection = useCallback(
+    (index: number) => {
+      const section = changeSections[index];
+      if (!section) return;
+      setCurrentChangeIndex(index);
+      setActiveChangeRowIndex(section.rowIndex);
+      setActiveChangeEndRowIndex(section.endRowIndex);
+    },
+    [changeSections],
   );
 
   const handleSelectChange = useCallback(
     (rowIndex: number) => {
-      const ord = ordinalByRowIndex.get(rowIndex);
-      if (ord == null) return;
-      setCurrentChangeIndex(ord);
-      setActiveChangeRowIndex(rowIndex);
+      const index = ordinalBySectionStart.get(rowIndex);
+      if (index == null) return;
+      activateSection(index);
     },
-    [ordinalByRowIndex],
+    [activateSection, ordinalBySectionStart],
   );
 
   const handleNextChange = useCallback(() => {
-    if (changeRowIndices.length === 0) return;
-    const nextIdx =
+    if (changeSections.length === 0) return;
+    const nextIndex =
       currentChangeIndex === null
         ? 0
-        : (currentChangeIndex + 1) % changeRowIndices.length;
-    setCurrentChangeIndex(nextIdx);
-    setActiveChangeRowIndex(changeRowIndices[nextIdx]);
-  }, [changeRowIndices, currentChangeIndex]);
+        : (currentChangeIndex + 1) % changeSections.length;
+    activateSection(nextIndex);
+  }, [activateSection, changeSections.length, currentChangeIndex]);
 
   const handlePrevChange = useCallback(() => {
-    if (changeRowIndices.length === 0) return;
-    const prevIdx =
+    if (changeSections.length === 0) return;
+    const previousIndex =
       currentChangeIndex === null
-        ? changeRowIndices.length - 1
-        : (currentChangeIndex - 1 + changeRowIndices.length) %
-          changeRowIndices.length;
-    setCurrentChangeIndex(prevIdx);
-    setActiveChangeRowIndex(changeRowIndices[prevIdx]);
-  }, [changeRowIndices, currentChangeIndex]);
+        ? changeSections.length - 1
+        : (currentChangeIndex - 1 + changeSections.length) %
+          changeSections.length;
+    activateSection(previousIndex);
+  }, [activateSection, changeSections.length, currentChangeIndex]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -657,16 +672,19 @@ export default function App() {
         handleDownloadPatch();
       } else if (key === 'f') {
         // Only hijack Ctrl/Cmd+F when a diff is visible; otherwise allow native find.
-        if (hasInput && result && (result.rows.length > 0 || identical)) {
+        if (comparisonReady && result && (result.rows.length > 0 || identical)) {
           e.preventDefault();
           setSearchOpen((o) => !o);
         }
         return;
       } else if (key === 'e') {
         e.preventDefault();
-        if (!hasInput) {
+        if (!comparisonReady) {
+          const missingSide = sourceReady.old ? 'right' : 'left';
           document
-            .querySelector<HTMLTextAreaElement>('.input-panel--left textarea')
+            .querySelector<HTMLTextAreaElement>(
+              `.input-panel--${missingSide} textarea`,
+            )
             ?.focus();
         } else if (editorOpen) {
           document
@@ -685,7 +703,8 @@ export default function App() {
     handleNextChange,
     handlePrevChange,
     handleEditSources,
-    hasInput,
+    comparisonReady,
+    sourceReady,
     result,
     identical,
     searchOpen,
@@ -701,6 +720,9 @@ export default function App() {
         onChange={setOldText}
         onError={showToast}
         fileName={fileNames.old}
+        onReadyChange={(ready) =>
+          setSourceReady((state) => ({ ...state, old: ready }))
+        }
         onFileInfo={(name) =>
           setFileNames((names) => ({ ...names, old: name }))
         }
@@ -723,6 +745,9 @@ export default function App() {
         onChange={setNewText}
         onError={showToast}
         fileName={fileNames.new}
+        onReadyChange={(ready) =>
+          setSourceReady((state) => ({ ...state, new: ready }))
+        }
         onFileInfo={(name) =>
           setFileNames((names) => ({ ...names, new: name }))
         }
@@ -747,17 +772,19 @@ export default function App() {
         onOpenShortcuts={() => setShortcutsOpen(true)}
       />
 
-      {!hasInput ? (
+      {!comparisonReady ? (
         <main id="main-content" className="main main--landing">
           <div className="panels">{inputPanels}</div>
 
           <section className="empty" aria-live="polite">
             <LogoIcon size={44} />
-            <h2>Compare two texts</h2>
+            <h2>{hasAnySource ? 'Add the other source' : 'Compare two texts'}</h2>
             <p>
-              Paste text or open files in the two panels above. Everything is
-              computed locally in real-time — your text never leaves this
-              device.
+              {hasAnySource
+                ? sourceReady.old
+                  ? 'Original is ready. Add the changed source to start the comparison.'
+                  : 'Changed source is ready. Add the original source to start the comparison.'
+                : 'Paste text or open files in both panels above. The viewer opens only when both sources are ready, and everything stays on this device.'}
             </p>
             <button
               type="button"
@@ -780,24 +807,26 @@ export default function App() {
             onSwap={handleSwap}
           />
 
-          <div className="workspace">
+          <div className={`workspace${sidebarOpen ? ' workspace--sidebar-open' : ''}`}>
+            {sidebarOpen && (
             <DiffSidebar
               stats={result?.stats ?? null}
               identical={!!identical}
               timeMs={result?.timeMs}
-              totalChanges={changeRowIndices.length}
-              currentChangeIndex={currentChangeIndex}
-              onNextChange={handleNextChange}
-              onPrevChange={handlePrevChange}
-              changes={listedChanges}
-              hiddenChanges={changeEntries.length - listedChanges.length}
-              activeChangeRowIndex={activeChangeRowIndex}
-              onSelectChange={handleSelectChange}
+              totalSections={changeSections.length}
+              currentSectionIndex={currentChangeIndex}
+              onNextSection={handleNextChange}
+              onPrevSection={handlePrevChange}
+              sections={listedSections}
+              hiddenSections={changeSections.length - listedSections.length}
+              activeSectionStartRow={activeChangeRowIndex}
+              onSelectSection={handleSelectChange}
               options={options}
               onOptionsChange={setOptions}
               syntaxEnabled={syntaxEnabled}
               onSyntaxChange={setSyntaxEnabled}
             />
+            )}
 
             <section className="results" aria-live="polite">
               <DiffToolbar
@@ -811,6 +840,8 @@ export default function App() {
                 onHideUnchangedLinesChange={handleHideUnchangedLines}
                 lineNumbers={lineNumbers}
                 onLineNumbersChange={setLineNumbers}
+                sidebarOpen={sidebarOpen}
+                onToggleSidebar={() => setSidebarOpen((open) => !open)}
                 searchOpen={searchOpen}
                 onToggleSearch={() => setSearchOpen((o) => !o)}
                 searchQuery={searchQuery}
@@ -840,6 +871,7 @@ export default function App() {
                   lineNumbers={lineNumbers}
                   searchQuery={searchQuery}
                   activeChangeRowIndex={activeChangeRowIndex}
+                  activeChangeEndRowIndex={activeChangeEndRowIndex}
                   onExpandGap={handleExpandGap}
                   onCopyNotice={showToast}
                   getTokens={getTokens}
@@ -851,7 +883,7 @@ export default function App() {
         </main>
       )}
 
-      {!hasInput && (
+      {!comparisonReady && (
         <footer className="footer">
           <p>
             DiffLens — an open source diff checker. Runs entirely in your browser;
@@ -918,7 +950,7 @@ export default function App() {
       )}
 
       <SourceEditorModal
-        isOpen={hasInput && editorOpen}
+        isOpen={comparisonReady && editorOpen}
         onClose={handleCloseEditor}
         oldText={oldText}
         newText={newText}
@@ -931,6 +963,12 @@ export default function App() {
         }
         onFileInfoNew={(name) =>
           setFileNames((names) => ({ ...names, new: name }))
+        }
+        onReadyChangeOld={(ready) =>
+          setSourceReady((state) => ({ ...state, old: ready }))
+        }
+        onReadyChangeNew={(ready) =>
+          setSourceReady((state) => ({ ...state, new: ready }))
         }
         onError={showToast}
         onSwap={handleSwap}

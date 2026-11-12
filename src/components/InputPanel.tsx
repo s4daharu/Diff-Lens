@@ -25,6 +25,7 @@ interface InputPanelProps {
   onFileInfo?: (fileName: string | null) => void;
   fileName?: string | null;
   placeholder?: string;
+  onReadyChange?: (ready: boolean) => void;
 }
 
 export function InputPanel({
@@ -36,6 +37,7 @@ export function InputPanel({
   onFileInfo,
   fileName,
   placeholder,
+  onReadyChange,
 }: InputPanelProps) {
   const fileRef = useRef<HTMLInputElement>(null);
   const toolsMenuRef = useRef<HTMLDivElement>(null);
@@ -71,6 +73,7 @@ export function InputPanel({
     try {
       onChange(await file.text());
       onFileInfo?.(file.name);
+      onReadyChange?.(true);
     } catch {
       onError(`Could not read "${file.name}".`);
     }
@@ -106,6 +109,7 @@ export function InputPanel({
       if (text) {
         onChange(text);
         onFileInfo?.(null);
+        onReadyChange?.(true);
       }
     } catch {
       onError('Clipboard access denied. Please paste directly into the box.');
@@ -252,6 +256,7 @@ export function InputPanel({
                   onClick={() => {
                     onChange('');
                     onFileInfo?.(null);
+                    onReadyChange?.(false);
                   }}
                   title="Clear text"
                   aria-label={`Clear ${title.toLowerCase()}`}
@@ -269,6 +274,7 @@ export function InputPanel({
           onChange={(e) => {
             onChange(e.target.value);
             onFileInfo?.(null);
+            onReadyChange?.(true);
           }}
           placeholder={
             placeholder ?? 'Paste text here, or drop a file onto this panel…'

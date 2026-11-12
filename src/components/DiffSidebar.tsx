@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
-import type { DiffOptions, DiffStats, RowKind } from '../lib/types';
+import type { DiffOptions, DiffStats } from '../lib/types';
+import type { ChangeSection, ChangeSectionKind } from '../lib/changeSections';
 import { Checkbox, Select } from './OptionControls';
 import {
   CheckIcon,
@@ -8,58 +9,55 @@ import {
   SlidersIcon,
 } from './Icons';
 
-export type ChangeKind = Exclude<RowKind, 'equal' | 'gap'>;
-
-export interface ChangeEntry {
-  rowIndex: number;
-  kind: ChangeKind;
-  oldNum: number | null;
-  newNum: number | null;
-}
-
 interface DiffSidebarProps {
   stats: DiffStats | null;
   identical: boolean;
   timeMs?: number;
-  totalChanges: number;
-  currentChangeIndex: number | null;
-  onNextChange: () => void;
-  onPrevChange: () => void;
-  changes: ChangeEntry[];
-  hiddenChanges: number;
-  activeChangeRowIndex: number | null;
-  onSelectChange: (rowIndex: number) => void;
+  totalSections: number;
+  currentSectionIndex: number | null;
+  onNextSection: () => void;
+  onPrevSection: () => void;
+  sections: ChangeSection[];
+  hiddenSections: number;
+  activeSectionStartRow: number | null;
+  onSelectSection: (rowIndex: number) => void;
   options: DiffOptions;
   onOptionsChange: (next: DiffOptions) => void;
   syntaxEnabled: boolean;
   onSyntaxChange: (enabled: boolean) => void;
 }
 
-const KIND_LABELS: Record<ChangeKind, string> = {
+const KIND_LABELS: Record<ChangeSectionKind, string> = {
   added: 'Added',
   deleted: 'Removed',
   modified: 'Modified',
+  mixed: 'Mixed',
 };
 
-function formatLocation(entry: ChangeEntry): string {
-  const fmt = (n: number | null) => (n == null ? '?' : `L${n}`);
-  if (entry.kind === 'modified') return `${fmt(entry.oldNum)} → ${fmt(entry.newNum)}`;
-  if (entry.kind === 'deleted') return fmt(entry.oldNum);
-  return fmt(entry.newNum);
+function formatRange(start: number | null, end: number | null): string {
+  if (start == null) return '?';
+  if (end == null || end === start) return `L${start}`;
+  return `L${start}–${end}`;
+}
+
+function formatLocation(entry: ChangeSection): string {
+  if (entry.kind === 'deleted') return formatRange(entry.oldNum, entry.oldEndNum);
+  if (entry.kind === 'added') return formatRange(entry.newNum, entry.newEndNum);
+  return `${formatRange(entry.oldNum, entry.oldEndNum)} → ${formatRange(entry.newNum, entry.newEndNum)}`;
 }
 
 export function DiffSidebar({
   stats,
   identical,
   timeMs,
-  totalChanges,
-  currentChangeIndex,
-  onNextChange,
-  onPrevChange,
-  changes,
-  hiddenChanges,
-  activeChangeRowIndex,
-  onSelectChange,
+  totalSections,
+  currentSectionIndex,
+  onNextSection,
+  onPrevSection,
+  sections,
+  hiddenSections,
+  activeSectionStartRow,
+  onSelectSection,
   options,
   onOptionsChange,
   syntaxEnabled,
@@ -68,10 +66,10 @@ export function DiffSidebar({
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (activeChangeRowIndex == null || !listRef.current) return;
+    if (activeSectionStartRow == null || !listRef.current) return;
     const el = listRef.current.querySelector('.change-item--active');
     el?.scrollIntoView({ block: 'nearest' });
-  }, [activeChangeRowIndex]);
+  }, [activeSectionStartRow]);
 
   const totalDiffLines = stats
     ? stats.added + stats.removed + stats.changed
@@ -80,7 +78,7 @@ export function DiffSidebar({
     totalDiffLines > 0 ? (n / totalDiffLines) * 100 : 0;
 
   return (
-    <aside className="diff-sidebar" aria-label="Diff summary and options">
+    <aside id="diff-sidebar" className="diff-sidebar" aria-label="Diff summary and options">
       {identical && stats && (
         <div className="sidebar-section">
           <div className="sidebar-identical">
@@ -174,66 +172,67 @@ export function DiffSidebar({
             </span>
           </div>
 
-          {totalChanges > 0 && (
+          {totalSections > 0 && (
             <div className="sidebar-section">
               <h3 className="sidebar-heading">Navigation</h3>
               <div
                 className="diff-nav-group"
                 role="group"
-                aria-label="Change navigation"
+                aria-label="Change section navigation"
               >
                 <span className="diff-nav-label">
-                  {currentChangeIndex != null
-                    ? `${currentChangeIndex + 1} of ${totalChanges}`
-                    : `${totalChanges} ${totalChanges === 1 ? 'change' : 'changes'}`}
+                  {currentSectionIndex != null
+                    ? `${currentSectionIndex + 1} of ${totalSections}`
+                    : `${totalSections} ${totalSections === 1 ? 'change' : 'sections'}`}
                 </span>
                 <button
                   type="button"
                   className="btn btn--small btn--icon"
-                  onClick={onPrevChange}
-                  title="Previous difference (Alt+P or Alt+Up)"
-                  aria-label="Previous difference"
+                  onClick={onPrevSection}
+                  title="Previous change section (Alt+P or Alt+Up)"
+                  aria-label="Previous change section"
                 >
                   <ChevronUpIcon size={14} />
                 </button>
                 <button
                   type="button"
                   className="btn btn--small btn--icon"
-                  onClick={onNextChange}
-                  title="Next difference (Alt+N or Alt+Down)"
-                  aria-label="Next difference"
+                  onClick={onNextSection}
+                  title="Next change section (Alt+N or Alt+Down)"
+                  aria-label="Next change section"
                 >
                   <ChevronDownIcon size={14} />
                 </button>
               </div>
 
-              {changes.length > 0 && (
-                <div className="changes-list" ref={listRef}>
-                  {changes.map((entry, i) => (
+              {sections.length > 0 && (
+                <div className="sections-list" ref={listRef}>
+                  {sections.map((entry, i) => (
                     <button
                       key={entry.rowIndex}
                       type="button"
                       data-row-index={entry.rowIndex}
                       className={`change-item change-item--${entry.kind}${
-                        activeChangeRowIndex === entry.rowIndex
+                        activeSectionStartRow === entry.rowIndex
                           ? ' change-item--active'
                           : ''
                       }`}
-                      onClick={() => onSelectChange(entry.rowIndex)}
-                      title={`Jump to ${KIND_LABELS[entry.kind].toLowerCase()} line`}
+                      onClick={() => onSelectSection(entry.rowIndex)}
+                      title={`Jump to ${KIND_LABELS[entry.kind].toLowerCase()} change section`}
                     >
-                      <span className="change-item__idx">#{i + 1}</span>
+                      <span className="change-item__idx">§{i + 1}</span>
                       <span className="change-item__loc">
                         {formatLocation(entry)}
                       </span>
                       <span className="change-item__kind">
                         {KIND_LABELS[entry.kind]}
+                        {entry.count > 1 && ` ×${entry.count}`}
                       </span>
                     </button>
                   ))}
-                  {hiddenChanges > 0 && (
-                    <span className="changes-more">
-                      +{hiddenChanges.toLocaleString()} more not listed
+                  {hiddenSections > 0 && (
+                    <span className="sections-more">
+                      +{hiddenSections.toLocaleString()} more sections not listed
                     </span>
                   )}
                 </div>
@@ -263,7 +262,7 @@ export function DiffSidebar({
             }
           />
           <Checkbox
-            label="Hide whitespace changes"
+            label="Hide whitespace sections"
             checked={options.ignoreWhitespace}
             onChange={(ignoreWhitespace) =>
               onOptionsChange({ ...options, ignoreWhitespace })
