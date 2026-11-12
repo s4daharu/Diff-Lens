@@ -590,8 +590,8 @@ console.log('--- moved-block detection ---');
 
 console.log('--- section merge operations ---');
 {
-  const additionOld = 'alpha\nbeta';
-  const additionNew = 'alpha\nbeta\ngamma';
+  const additionOld = 'alpha\nbeta\n';
+  const additionNew = 'alpha\nbeta\ngamma\n';
   const additionDiff = computeDiff(additionOld, additionNew, base);
   const additionVisible = applyContext(additionDiff.rows, 0);
   const additionSections = buildChangeSections(
@@ -599,8 +599,9 @@ console.log('--- section merge operations ---');
     additionDiff.rows,
   );
   check(
-    'collapsed addition keeps source insertion point',
-    additionSections[0]?.oldStartLine === 2 &&
+    'collapsed pure addition keeps source insertion point',
+    additionSections[0]?.kind === 'added' &&
+      additionSections[0]?.oldStartLine === 2 &&
       additionSections[0]?.oldEndLine === 2 &&
       additionSections[0]?.newStartLine === 2 &&
       additionSections[0]?.newEndLine === 3,
@@ -613,9 +614,23 @@ console.log('--- section merge operations ---');
     'changed-to-original',
   );
   check(
-    'accepting EOF addition preserves missing-final-newline semantics',
+    'accepting pure EOF addition matches Changed',
     acceptedAddition.oldText === additionNew,
     acceptedAddition.oldText,
+  );
+
+  const noNewlineOld = 'alpha\nbeta';
+  const noNewlineNew = 'alpha\nbeta\ngamma';
+  const noNewlineDiff = computeDiff(noNewlineOld, noNewlineNew, base);
+  const noNewlineSection = buildChangeSections(noNewlineDiff.rows)[0];
+  check(
+    'accepting EOF addition preserves missing-final-newline semantics',
+    mergeChangeSections(
+      noNewlineOld,
+      noNewlineNew,
+      [noNewlineSection],
+      'changed-to-original',
+    ).oldText === noNewlineNew,
   );
 
   const deletionOld = 'alpha\nbeta\ngamma';
