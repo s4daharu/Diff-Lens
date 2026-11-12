@@ -39,19 +39,19 @@ Cloud sharing, inline comments, accounts, and cloud AI summaries are intentional
 
 ## Planned milestones
 
-### Milestone 1 — Custom ignore rules and Smart precision
+### Milestone 1 — Custom ignore rules and Smart precision ✅
 
 Goal: make noisy logs, generated files, IDs, timestamps, prose, and identifiers easier to compare without changing the source text.
 
-- [ ] Extend diff options with ordered, enabled/disabled custom ignore rules.
-- [ ] Support literal rules first; add regex rules only with validation, pattern-length limits, and execution inside the diff worker so a bad pattern cannot freeze the UI thread.
-- [ ] Allow rules to be added, edited, reordered, toggled, and removed from Diff options.
-- [ ] Apply ignore normalization before line/intra-line comparison while retaining the original text for rendering.
-- [ ] Persist rules in local preferences and named comparison sessions.
-- [ ] Add a `smart` granularity mode alongside fixed character and word modes.
-- [ ] Make Smart precision choose character-level highlighting for short identifiers/numbers and word-level highlighting for prose-like edits, using a deterministic heuristic covered by tests.
-- [ ] Audit patch/Markdown/HTML exports under ignore rules so ignored differences never produce a misleading replayable patch. If an active ignore rule makes a patch non-replayable, either build the patch from the raw diff or clearly disable/label that export.
-- [ ] Add unit and browser coverage for timestamps, UUID/build-number noise, invalid regex input, prose edits, and identifier edits.
+- [x] Extend diff options with ordered, enabled/disabled custom ignore rules.
+- [x] Support literal rules first; add regex rules only with validation, pattern-length limits, and execution inside the diff worker so a bad pattern cannot freeze the UI thread.
+- [x] Allow rules to be added, edited, reordered, toggled, and removed from Diff options.
+- [x] Apply ignore normalization before line/intra-line comparison while retaining the original text for rendering.
+- [x] Persist rules in local preferences and named comparison sessions.
+- [x] Add a `smart` granularity mode alongside fixed character and word modes.
+- [x] Make Smart precision choose character-level highlighting for short identifiers/numbers and word-level highlighting for prose-like edits, using a deterministic heuristic covered by tests.
+- [x] Audit patch/Markdown/HTML exports under ignore rules so ignored differences never produce a misleading replayable patch. If an active ignore rule makes a patch non-replayable, either build the patch from the raw diff or clearly disable/label that export.
+- [x] Add unit and browser coverage for timestamps, UUID/build-number noise, invalid regex input, prose edits, and identifier edits.
 
 Acceptance:
 - A repeating timestamp/session-ID pattern can be ignored without editing either source.

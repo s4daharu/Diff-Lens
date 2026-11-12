@@ -529,6 +529,59 @@ check('search matches highlighted', matchesCount > 0, `matches=${matchesCount}`)
 await page.locator('.diff-search-clear').click();
 await page.getByRole('button', { name: 'Close', exact: true }).click();
 
+// custom ignore rules + Smart precision
+await editSources();
+await ta.fill('2026-11-12T10:00:00Z request ready\n');
+await ta2.fill('2026-11-12T10:00:09Z request ready\n');
+await closeEditor();
+await page.waitForTimeout(700);
+await ensureSidebarOpen();
+await openSidebarOptions();
+await page.getByRole('button', { name: '+ Add rule' }).click();
+await page.getByLabel('Ignore rule 1 type').selectOption('regex');
+await page
+  .getByLabel('Ignore rule 1 pattern')
+  .fill('\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z');
+await page.getByLabel('Enable ignore rule 1').check();
+await page.waitForTimeout(700);
+check(
+  'custom regex ignore hides volatile timestamp change',
+  (await page.locator('.sidebar-identical-msg').count()) === 1,
+);
+
+const rawPatchDownload = page.waitForEvent('download');
+await page.getByRole('button', { name: 'Export options' }).click();
+await page.getByRole('menuitem', { name: 'Download .patch' }).click();
+const rawPatch = await rawPatchDownload;
+const rawPatchText = readFileSync(await rawPatch.path(), 'utf8');
+check(
+  'patch export remains raw and replayable under ignore rules',
+  rawPatchText.includes('-2026-11-12T10:00:00Z request ready') &&
+    rawPatchText.includes('+2026-11-12T10:00:09Z request ready'),
+  rawPatchText,
+);
+
+await page.getByRole('button', { name: '+ Add rule' }).click();
+await page.getByLabel('Ignore rule 2 type').selectOption('regex');
+await page.getByLabel('Ignore rule 2 pattern').fill('(');
+check(
+  'invalid regex is reported inline',
+  (await page.locator('.ignore-rule__error').last().textContent())?.includes(
+    'Invalid regex',
+  ),
+);
+check(
+  'invalid regex cannot be enabled',
+  await page.getByLabel('Enable ignore rule 2').isDisabled(),
+);
+await page.getByLabel('Remove ignore rule 2').click();
+
+await page.getByLabel('Granularity').selectOption('smart');
+check(
+  'Smart precision is selectable',
+  (await page.getByLabel('Granularity').inputValue()) === 'smart',
+);
+
 // preset samples dropdown
 await page.getByRole('button', { name: 'Samples' }).click();
 await page.waitForSelector('.dropdown-menu');
@@ -599,7 +652,9 @@ check(
     savedSession.name === 'API Review' &&
     savedSession.sources?.original?.name === 'config.v1.json' &&
     savedSession.preferences?.viewMode === 'inline' &&
-    savedSession.preferences?.options?.context === 3,
+    savedSession.preferences?.options?.context === 3 &&
+    savedSession.preferences?.options?.granularity === 'smart' &&
+    savedSession.preferences?.options?.ignoreRules?.[0]?.enabled === true,
   JSON.stringify(savedSession.preferences),
 );
 
@@ -660,6 +715,15 @@ check(
 check(
   'session import restores ignore-line-endings option',
   await page.getByLabel('Ignore line-ending style').isChecked(),
+);
+check(
+  'session import restores Smart precision',
+  (await page.getByLabel('Granularity').inputValue()) === 'smart',
+);
+check(
+  'session import restores custom ignore rules',
+  (await page.getByLabel('Ignore rule 1 pattern').inputValue()).length > 0 &&
+    (await page.getByLabel('Enable ignore rule 1').isChecked()),
 );
 
 // Invalid imports must leave the current comparison intact.

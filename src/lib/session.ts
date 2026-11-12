@@ -1,8 +1,13 @@
 import {
   DEFAULT_OPTIONS,
   type DiffOptions,
+  type IgnoreRule,
   type ViewMode,
 } from './types';
+import {
+  MAX_IGNORE_RULES,
+  validateIgnoreRule,
+} from './ignoreRules';
 
 export const SESSION_FORMAT = 'difflens-session';
 export const SESSION_VERSION = 1;
@@ -74,6 +79,36 @@ function source(value: unknown, label: string): SessionSource {
   };
 }
 
+function ignoreRules(value: unknown): IgnoreRule[] {
+  if (value == null) return [];
+  if (!Array.isArray(value) || value.length > MAX_IGNORE_RULES) {
+    throw new Error('Invalid session: custom ignore rules are not supported.');
+  }
+
+  return value.map((entry, index) => {
+    const raw = record(entry, `preferences.options.ignoreRules[${index}]`);
+    if (
+      (raw.kind !== 'literal' && raw.kind !== 'regex') ||
+      typeof raw.pattern !== 'string' ||
+      typeof raw.enabled !== 'boolean'
+    ) {
+      throw new Error('Invalid session: custom ignore rule is incomplete.');
+    }
+    const rule: IgnoreRule = {
+      kind: raw.kind,
+      pattern: raw.pattern,
+      enabled: raw.enabled,
+    };
+    if (rule.pattern !== '' || rule.enabled) {
+      const error = validateIgnoreRule(rule);
+      if (error) {
+        throw new Error(`Invalid session: custom ignore rule: ${error}`);
+      }
+    }
+    return rule;
+  });
+}
+
 function options(value: unknown): DiffOptions {
   const raw = record(value, 'preferences.options');
   const context = raw.context;
@@ -89,7 +124,9 @@ function options(value: unknown): DiffOptions {
     typeof raw.ignoreWhitespace !== 'boolean' ||
     typeof raw.ignoreLineEndings !== 'boolean' ||
     !validContext ||
-    (raw.granularity !== 'chars' && raw.granularity !== 'words')
+    (raw.granularity !== 'chars' &&
+      raw.granularity !== 'words' &&
+      raw.granularity !== 'smart')
   ) {
     throw new Error('Invalid session: diff options are not supported.');
   }
@@ -100,6 +137,7 @@ function options(value: unknown): DiffOptions {
     ignoreLineEndings: raw.ignoreLineEndings,
     context: context as DiffOptions['context'],
     granularity: raw.granularity,
+    ignoreRules: ignoreRules(raw.ignoreRules),
   };
 }
 

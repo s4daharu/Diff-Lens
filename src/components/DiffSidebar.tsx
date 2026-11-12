@@ -1,5 +1,14 @@
-import { useEffect, useRef } from 'react';
-import type { DiffOptions, DiffStats } from '../lib/types';
+import { useEffect, useRef, useState } from 'react';
+import type {
+  DiffOptions,
+  DiffStats,
+  IgnoreRule,
+  IgnoreRuleKind,
+} from '../lib/types';
+import {
+  MAX_IGNORE_RULES,
+  validateIgnoreRule,
+} from '../lib/ignoreRules';
 import type { ChangeSection, ChangeSectionKind } from '../lib/changeSections';
 import { Checkbox, Select } from './OptionControls';
 import {
@@ -46,6 +55,116 @@ function formatLocation(entry: ChangeSection): string {
   if (entry.kind === 'deleted') return formatRange(entry.oldNum, entry.oldEndNum);
   if (entry.kind === 'added') return formatRange(entry.newNum, entry.newEndNum);
   return `${formatRange(entry.oldNum, entry.oldEndNum)} → ${formatRange(entry.newNum, entry.newEndNum)}`;
+}
+
+function IgnoreRuleEditor({
+  rule,
+  index,
+  count,
+  onChange,
+  onMove,
+  onRemove,
+}: {
+  rule: IgnoreRule;
+  index: number;
+  count: number;
+  onChange: (rule: IgnoreRule) => void;
+  onMove: (direction: -1 | 1) => void;
+  onRemove: () => void;
+}) {
+  const [draftKind, setDraftKind] = useState<IgnoreRuleKind>(rule.kind);
+  const [draftPattern, setDraftPattern] = useState(rule.pattern);
+
+  useEffect(() => {
+    setDraftKind(rule.kind);
+    setDraftPattern(rule.pattern);
+  }, [rule.kind, rule.pattern]);
+
+  const candidate: IgnoreRule = {
+    kind: draftKind,
+    pattern: draftPattern,
+    enabled: rule.enabled,
+  };
+  const error = validateIgnoreRule(candidate);
+
+  const updateDraft = (kind: IgnoreRuleKind, pattern: string) => {
+    setDraftKind(kind);
+    setDraftPattern(pattern);
+    const next = { ...rule, kind, pattern };
+    if (validateIgnoreRule(next) === null) onChange(next);
+  };
+
+  return (
+    <div className="ignore-rule">
+      <div className="ignore-rule__controls">
+        <label
+          className={`ignore-rule__enabled${error ? ' ignore-rule__enabled--disabled' : ''}`}
+          title={error ?? 'Enable this custom ignore rule'}
+        >
+          <input
+            type="checkbox"
+            aria-label={`Enable ignore rule ${index + 1}`}
+            checked={rule.enabled}
+            disabled={Boolean(error)}
+            onChange={(event) =>
+              onChange({ ...rule, enabled: event.target.checked })
+            }
+          />
+        </label>
+        <select
+          className="select ignore-rule__kind"
+          aria-label={`Ignore rule ${index + 1} type`}
+          value={draftKind}
+          onChange={(event) =>
+            updateDraft(event.target.value as IgnoreRuleKind, draftPattern)
+          }
+        >
+          <option value="literal">Literal</option>
+          <option value="regex">Regex</option>
+        </select>
+        <div className="ignore-rule__actions">
+          <button
+            type="button"
+            className="btn btn--small btn--icon"
+            onClick={() => onMove(-1)}
+            disabled={index === 0}
+            aria-label={`Move ignore rule ${index + 1} up`}
+            title="Move rule up"
+          >
+            <ChevronUpIcon size={13} />
+          </button>
+          <button
+            type="button"
+            className="btn btn--small btn--icon"
+            onClick={() => onMove(1)}
+            disabled={index === count - 1}
+            aria-label={`Move ignore rule ${index + 1} down`}
+            title="Move rule down"
+          >
+            <ChevronDownIcon size={13} />
+          </button>
+          <button
+            type="button"
+            className="btn btn--small btn--icon"
+            onClick={onRemove}
+            aria-label={`Remove ignore rule ${index + 1}`}
+            title="Remove rule"
+          >
+            <CloseIcon size={13} />
+          </button>
+        </div>
+      </div>
+      <input
+        className={`ignore-rule__pattern${error ? ' ignore-rule__pattern--invalid' : ''}`}
+        aria-label={`Ignore rule ${index + 1} pattern`}
+        aria-invalid={error ? 'true' : undefined}
+        value={draftPattern}
+        placeholder={draftKind === 'regex' ? String.raw`\d{4}-\d{2}-\d{2}` : 'text to ignore'}
+        onChange={(event) => updateDraft(draftKind, event.target.value)}
+      />
+      {error && <span className="ignore-rule__error">{error}</span>}
+    </div>
+  );
 }
 
 export function DiffSidebar({
@@ -336,8 +455,74 @@ export function DiffSidebar({
             options={[
               { value: 'chars', label: 'Char level' },
               { value: 'words', label: 'Word level' },
+              { value: 'smart', label: 'Smart (automatic)' },
             ]}
           />
+          <div className="ignore-rules">
+            <div className="ignore-rules__header">
+              <div>
+                <span className="ignore-rules__title">Custom ignore rules</span>
+                <span className="ignore-rules__hint">
+                  Mask volatile text without changing either source.
+                </span>
+              </div>
+              <button
+                type="button"
+                className="btn btn--small"
+                disabled={options.ignoreRules.length >= MAX_IGNORE_RULES}
+                onClick={() =>
+                  onOptionsChange({
+                    ...options,
+                    ignoreRules: [
+                      ...options.ignoreRules,
+                      { kind: 'literal', pattern: '', enabled: false },
+                    ],
+                  })
+                }
+              >
+                + Add rule
+              </button>
+            </div>
+            {options.ignoreRules.length === 0 ? (
+              <span className="ignore-rules__empty">No custom rules.</span>
+            ) : (
+              <div className="ignore-rules__list">
+                {options.ignoreRules.map((rule, index) => (
+                  <IgnoreRuleEditor
+                    key={index}
+                    rule={rule}
+                    index={index}
+                    count={options.ignoreRules.length}
+                    onChange={(nextRule) => {
+                      const ignoreRules = [...options.ignoreRules];
+                      ignoreRules[index] = nextRule;
+                      onOptionsChange({ ...options, ignoreRules });
+                    }}
+                    onMove={(direction) => {
+                      const target = index + direction;
+                      if (target < 0 || target >= options.ignoreRules.length) {
+                        return;
+                      }
+                      const ignoreRules = [...options.ignoreRules];
+                      [ignoreRules[index], ignoreRules[target]] = [
+                        ignoreRules[target],
+                        ignoreRules[index],
+                      ];
+                      onOptionsChange({ ...options, ignoreRules });
+                    }}
+                    onRemove={() =>
+                      onOptionsChange({
+                        ...options,
+                        ignoreRules: options.ignoreRules.filter(
+                          (_, ruleIndex) => ruleIndex !== index,
+                        ),
+                      })
+                    }
+                  />
+                ))}
+              </div>
+            )}
+          </div>
           <Checkbox
             label="Syntax highlighting"
             checked={syntaxEnabled}

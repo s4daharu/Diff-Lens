@@ -11,13 +11,13 @@ with all diff computation happening in a Web Worker.
 - Workspace layout: diff canvas fills the viewport, with a summary sidebar
   (stats, change outline, options) and a compact toolbar
 - Side-by-side and inline (unified) diff views
-- Intra-line highlighting at character or word granularity
+- Intra-line highlighting at character, word, or Smart automatic granularity
 - Landing screen with dual input panels; once a diff exists, sources collapse
   into an "Edit sources" drawer
 - Change-section outline — navigate contiguous edit hunks instead of stepping line by line
 - Difference minimap gutter with pointer and keyboard navigation
 - Paste text, open files (up to 10 MB), or drag & drop
-- Ignore case / whitespace / line endings (CRLF) options
+- Ignore case / whitespace / line endings (CRLF) plus ordered literal/regex custom ignore rules
 - Adjustable context lines with hidden-region collapse
 - Diff stats, find-in-diff, unified `.patch` / Markdown / HTML report export
 - Named `.difflens.json` comparison sessions for local import/export of both sources and view preferences

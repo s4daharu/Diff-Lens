@@ -676,12 +676,24 @@ export function buildHtmlDiffReport({
   stats,
   oldName = 'original.txt',
   newName = 'changed.txt',
+  options,
 }: {
   rows: DiffRow[];
   stats: DiffStats | null;
   oldName?: string;
   newName?: string;
+  options?: DiffOptions;
 }): string {
+  const activeRules = options?.ignoreRules.filter((rule) => rule.enabled) ?? [];
+  const comparisonOptions = [
+    options?.ignoreCase ? 'ignore case' : null,
+    options?.ignoreWhitespace ? 'ignore whitespace changes' : null,
+    options?.ignoreLineEndings ? 'ignore line-ending style' : null,
+    activeRules.length > 0
+      ? `${activeRules.length} custom ignore ${activeRules.length === 1 ? 'rule' : 'rules'}`
+      : null,
+    options ? `${options.granularity} intra-line precision` : null,
+  ].filter((value): value is string => Boolean(value));
   const rowsHtml = rows
     .map((row) => {
       if (row.kind === 'gap') {
@@ -756,6 +768,7 @@ export function buildHtmlDiffReport({
   }
   .title { margin: 0 0 8px; font-size: 20px; }
   .stats { display: flex; gap: 12px; font-size: 14px; margin-top: 8px; }
+  .meta { margin-top: 8px; color: var(--ln-color); font-size: 12px; }
   .pill { padding: 3px 8px; border-radius: 999px; font-weight: 600; }
   .pill-add { background: var(--add-bg); color: #1d7a45; }
   .pill-del { background: var(--del-bg); color: #c0392b; }
@@ -816,6 +829,9 @@ export function buildHtmlDiffReport({
         <span>${stats.unchanged} unchanged</span>
       ` : ''}
     </div>
+    ${comparisonOptions.length > 0
+      ? `<div class="meta">Comparison options: ${escapeHtml(comparisonOptions.join(', '))}. Patch/Markdown exports always use the raw source difference.</div>`
+      : ''}
   </div>
   <table class="diff-table">
     <thead>

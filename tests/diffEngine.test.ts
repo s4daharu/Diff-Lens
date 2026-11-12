@@ -9,7 +9,9 @@ import {
   formatJson,
   applyTextTransform,
   hasNoNewlineAtEof,
+  chooseSmartGranularity,
 } from '../src/lib/diffEngine';
+import { validateIgnoreRule } from '../src/lib/ignoreRules';
 import type { DiffOptions } from '../src/lib/types';
 import { applyPatch } from 'diff';
 import { buildVirtualOffsets, findVirtualIndex, getVirtualRange } from '../src/lib/virtualRows';
@@ -28,6 +30,7 @@ const base: DiffOptions = {
   ignoreLineEndings: false,
   context: 'all',
   granularity: 'chars',
+  ignoreRules: [],
 };
 
 let failures = 0;
@@ -121,6 +124,99 @@ console.log('--- empty vs content ---');
   check('oldLines=0, newLines=2', r.stats?.oldLines === 0 && r.stats?.newLines === 2, r.stats);
 }
 
+console.log('--- custom ignore rules and smart precision ---');
+{
+  const timestampRule = {
+    kind: 'regex' as const,
+    pattern: '\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z',
+    enabled: true,
+  };
+  const ignored = computeDiff(
+    '2026-11-12T10:00:00Z request ready\n',
+    '2026-11-12T10:00:09Z request ready\n',
+    { ...base, ignoreRules: [timestampRule] },
+  );
+  check(
+    'regex ignore makes volatile timestamp equal',
+    ignored.stats?.unchanged === 1 && ignored.stats.changed === 0,
+    ignored.stats,
+  );
+  check(
+    'ignored equality preserves original source text',
+    ignored.rows[0]?.oldLine === '2026-11-12T10:00:00Z request ready' &&
+      ignored.rows[0]?.newLine === '2026-11-12T10:00:09Z request ready',
+    ignored.rows[0],
+  );
+
+  const mixed = computeDiff(
+    '2026-11-12T10:00:00Z status=READY id=abc123\n',
+    '2026-11-12T10:00:09Z status=FAILED id=xyz999\n',
+    {
+      ...base,
+      ignoreRules: [
+        timestampRule,
+        { kind: 'regex', pattern: 'id=[a-z0-9]+', enabled: true },
+      ],
+    },
+  );
+  const oldHighlighted = (mixed.rows[0]?.oldSpans ?? [])
+    .filter((span) => span.removed)
+    .map((span) => span.text)
+    .join('');
+  const newHighlighted = (mixed.rows[0]?.newSpans ?? [])
+    .filter((span) => span.added)
+    .map((span) => span.text)
+    .join('');
+  check(
+    'real change still highlighted beside ignored noise',
+    oldHighlighted.includes('READY') &&
+      newHighlighted.includes('FAILED') &&
+      !oldHighlighted.includes('10:00:00') &&
+      !newHighlighted.includes('10:00:09') &&
+      !oldHighlighted.includes('abc123') &&
+      !newHighlighted.includes('xyz999'),
+    { oldHighlighted, newHighlighted, row: mixed.rows[0] },
+  );
+  check(
+    'masked spans reconstruct original lines',
+    (mixed.rows[0]?.oldSpans ?? []).map((span) => span.text).join('') ===
+        mixed.rows[0]?.oldLine &&
+      (mixed.rows[0]?.newSpans ?? []).map((span) => span.text).join('') ===
+        mixed.rows[0]?.newLine,
+    mixed.rows[0],
+  );
+
+  check(
+    'invalid regex is rejected',
+    validateIgnoreRule({
+      kind: 'regex',
+      pattern: '(',
+      enabled: true,
+    })?.startsWith('Invalid regex:') === true,
+  );
+  check(
+    'nested quantified regex is rejected',
+    validateIgnoreRule({
+      kind: 'regex',
+      pattern: '(a+)+$',
+      enabled: true,
+    })?.includes('Nested quantified') === true,
+  );
+
+  check(
+    'smart precision chooses words for prose',
+    chooseSmartGranularity(
+      'The quick brown fox jumps over the lazy dog in the garden.',
+      'The quick brown fox walks over the lazy dog in the garden.',
+    ) === 'words',
+  );
+  check(
+    'smart precision chooses chars for identifiers',
+    chooseSmartGranularity('release_build_10429', 'release_build_10439') ===
+      'chars',
+  );
+}
+
 console.log('--- context trimming ---');
 {
   const r = computeDiff('1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n', '1\n2\nX\n4\n5\n6\nY\n8\n9\n10\n', base);
@@ -207,6 +303,24 @@ console.log('--- buildMarkdownDiff and buildHtmlDiffReport ---');
   });
   check('html report has doctype', html.includes('<!DOCTYPE html>'));
   check('html report has diff table', html.includes('class="diff-table"'));
+  const filteredHtml = buildHtmlDiffReport({
+    rows: r.rows,
+    stats: r.stats,
+    oldName: 'a.txt',
+    newName: 'b.txt',
+    options: {
+      ...base,
+      granularity: 'smart',
+      ignoreRules: [
+        { kind: 'literal', pattern: 'request-id=', enabled: true },
+      ],
+    },
+  });
+  check(
+    'html report discloses comparison filters',
+    filteredHtml.includes('1 custom ignore rule') &&
+      filteredHtml.includes('smart intra-line precision'),
+  );
 }
 
 console.log('--- no newline at EOF markers ---');
@@ -346,7 +460,15 @@ console.log('--- comparison sessions ---');
     newName: 'changed.txt',
     oldReady: true,
     newReady: true,
-    options: { ...base, context: 3, ignoreLineEndings: true },
+    options: {
+      ...base,
+      context: 3,
+      ignoreLineEndings: true,
+      granularity: 'smart',
+      ignoreRules: [
+        { kind: 'literal', pattern: 'request-id=', enabled: true },
+      ],
+    },
     viewMode: 'inline',
     wrap: true,
     lineNumbers: false,
@@ -357,7 +479,14 @@ console.log('--- comparison sessions ---');
   check('session name is normalized', parsed.name === 'API Migration Review', parsed.name);
   check('session preserves empty ready source', parsed.sources.original.ready && parsed.sources.original.text === '', parsed.sources.original);
   check('session preserves source filenames', parsed.sources.original.name === 'empty.txt' && parsed.sources.changed.name === 'changed.txt', parsed.sources);
-  check('session restores diff options', parsed.preferences.options.context === 3 && parsed.preferences.options.ignoreLineEndings, parsed.preferences.options);
+  check(
+    'session restores diff options and custom rules',
+    parsed.preferences.options.context === 3 &&
+      parsed.preferences.options.ignoreLineEndings &&
+      parsed.preferences.options.granularity === 'smart' &&
+      parsed.preferences.options.ignoreRules[0]?.pattern === 'request-id=',
+    parsed.preferences.options,
+  );
   check('session restores view preferences', parsed.preferences.viewMode === 'inline' && parsed.preferences.wrap && !parsed.preferences.lineNumbers && !parsed.preferences.syntaxEnabled, parsed.preferences);
   check('session filename is safe', sessionFileName(parsed.name) === 'api-migration-review.difflens.json', sessionFileName(parsed.name));
 

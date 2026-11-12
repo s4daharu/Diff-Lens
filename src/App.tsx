@@ -26,9 +26,8 @@ import { SAMPLE_CHANGED, SAMPLE_ORIGINAL } from './lib/sample';
 import {
   applyContext,
   buildHtmlDiffReport,
-  buildMarkdownDiff,
-  hasNoNewlineAtEof,
 } from './lib/diffEngine';
+import { sanitizeIgnoreRules } from './lib/ignoreRules';
 import { buildChangeSections } from './lib/changeSections';
 import {
   createLineTokenizer,
@@ -55,6 +54,7 @@ interface WorkerResponse {
 }
 
 const DEBOUNCE_MS = 250;
+const WORKER_TIMEOUT_MS = 7500;
 const SECTION_LIST_CAP = 400;
 
 function usePersistedState<T>(
@@ -89,7 +89,11 @@ function sanitizeOptions(raw: unknown): DiffOptions {
         : typeof o.context === 'number' && Number.isFinite(o.context)
           ? o.context
           : DEFAULT_OPTIONS.context,
-    granularity: o.granularity === 'words' ? 'words' : 'chars',
+    granularity:
+      o.granularity === 'words' || o.granularity === 'smart'
+        ? o.granularity
+        : 'chars',
+    ignoreRules: sanitizeIgnoreRules(o.ignoreRules),
   };
 }
 
@@ -161,6 +165,7 @@ export default function App() {
   }));
 
   const workerRef = useRef<Worker | null>(null);
+  const workerWatchdogRef = useRef<number | undefined>(undefined);
   const seqRef = useRef(0);
   const toastTimerRef = useRef<number | undefined>(undefined);
   const themeOverridden = useRef(loadString(storageKeys.theme, '') !== '');
@@ -186,6 +191,8 @@ export default function App() {
     w.onmessage = (e: MessageEvent<WorkerResponse>) => {
       const msg = e.data;
       if (msg.id !== seqRef.current) return;
+      window.clearTimeout(workerWatchdogRef.current);
+      workerWatchdogRef.current = undefined;
       setComputing(false);
       if (!msg.ok) {
         setResult(null);
@@ -196,6 +203,10 @@ export default function App() {
       setPatch(msg.patch ?? null);
     };
     w.onerror = () => {
+      window.clearTimeout(workerWatchdogRef.current);
+      workerWatchdogRef.current = undefined;
+      w.terminate();
+      if (workerRef.current === w) workerRef.current = null;
       setComputing(false);
       showToast('Diff worker failed — try smaller inputs.');
     };
@@ -232,6 +243,7 @@ export default function App() {
   useEffect(() => {
     ensureWorker();
     return () => {
+      window.clearTimeout(workerWatchdogRef.current);
       workerRef.current?.terminate();
       workerRef.current = null;
     };
@@ -262,6 +274,8 @@ export default function App() {
     };
   }, [syntaxEnabled, syntaxLang, theme]);
   useEffect(() => {
+    window.clearTimeout(workerWatchdogRef.current);
+    workerWatchdogRef.current = undefined;
     if (!sourceReady.old || !sourceReady.new) {
       seqRef.current++;
       setResult(null);
@@ -281,9 +295,27 @@ export default function App() {
         oldName: fileNames.old ?? undefined,
         newName: fileNames.new ?? undefined,
       });
+      workerWatchdogRef.current = window.setTimeout(() => {
+        if (id !== seqRef.current) return;
+        w.terminate();
+        if (workerRef.current === w) workerRef.current = null;
+        workerWatchdogRef.current = undefined;
+        setComputing(false);
+        showToast(
+          'Comparison timed out. Check custom regex rules or try smaller inputs.',
+        );
+      }, WORKER_TIMEOUT_MS);
     }, DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
-  }, [oldText, newText, options, fileNames, sourceReady, ensureWorker]);
+  }, [
+    oldText,
+    newText,
+    options,
+    fileNames,
+    sourceReady,
+    ensureWorker,
+    showToast,
+  ]);
 
   // Reset expanded gaps when inputs or context settings change
   useEffect(() => {
@@ -459,18 +491,9 @@ export default function App() {
   }, [patch, showToast]);
 
   const handleCopyMarkdown = useCallback(async () => {
-    if (!result || result.rows.length === 0) return;
+    if (patch === null) return;
     try {
-      const md = buildMarkdownDiff(
-        result.rows,
-        options.context,
-        fileNames.old ?? 'original.txt',
-        fileNames.new ?? 'changed.txt',
-        {
-          oldNoNewlineAtEof: hasNoNewlineAtEof(oldText),
-          newNoNewlineAtEof: hasNoNewlineAtEof(newText),
-        },
-      );
+      const md = `\`\`\`diff\n${patch.trimEnd()}\n\`\`\`\n`;
       await navigator.clipboard.writeText(md);
       setCopiedMarkdown(true);
       showToast('Copied Markdown diff to clipboard');
@@ -478,7 +501,7 @@ export default function App() {
     } catch {
       showToast('Could not access the clipboard.');
     }
-  }, [result, options.context, fileNames, oldText, newText, showToast]);
+  }, [patch, showToast]);
 
   const triggerDownload = useCallback((blob: Blob, filename: string) => {
     const url = URL.createObjectURL(blob);
@@ -611,12 +634,13 @@ export default function App() {
       stats: result.stats,
       oldName: fileNames.old ?? 'original.txt',
       newName: fileNames.new ?? 'changed.txt',
+      options,
     });
     const blob = new Blob([html], { type: 'text/html' });
     const base = (name: string | null) =>
       name ? name.replace(/\.[^./\\]+$/, '') : 'diff';
     triggerDownload(blob, `${base(fileNames.new)}-report.html`);
-  }, [result, options.context, expandedIndices, fileNames, triggerDownload]);
+  }, [result, options, expandedIndices, fileNames, triggerDownload]);
 
   const handleExpandGap = useCallback(
     (startRow: number, endRow: number) => {
