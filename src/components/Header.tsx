@@ -7,11 +7,13 @@ import {
   SunIcon,
 } from './Icons';
 import { SAMPLE_PRESETS } from '../lib/sample';
-import type { SamplePreset } from '../lib/types';
+import type { ComparisonType, SamplePreset } from '../lib/types';
 
 interface HeaderProps {
   theme: 'light' | 'dark';
   onToggleTheme: () => void;
+  comparisonType: ComparisonType;
+  onComparisonTypeChange: (type: ComparisonType) => void;
   onNewDiff: () => void;
   busy: boolean;
   onSelectPreset?: (preset: SamplePreset) => void;
@@ -22,6 +24,8 @@ interface HeaderProps {
 export function Header({
   theme,
   onToggleTheme,
+  comparisonType,
+  onComparisonTypeChange,
   onNewDiff,
   busy,
   onSelectPreset,
@@ -60,6 +64,43 @@ export function Header({
             Open source diff checker — runs 100% in your browser
           </span>
         </div>
+      </div>
+
+      <div
+        className="comparison-type-switch"
+        role="group"
+        aria-label="Comparison type"
+      >
+        <button
+          type="button"
+          className={`comparison-type-switch__button${
+            comparisonType === 'text'
+              ? ' comparison-type-switch__button--active'
+              : ''
+          }`}
+          aria-pressed={comparisonType === 'text'}
+          onClick={() => {
+            setSamplesOpen(false);
+            onComparisonTypeChange('text');
+          }}
+        >
+          Text
+        </button>
+        <button
+          type="button"
+          className={`comparison-type-switch__button${
+            comparisonType === 'image'
+              ? ' comparison-type-switch__button--active'
+              : ''
+          }`}
+          aria-pressed={comparisonType === 'image'}
+          onClick={() => {
+            setSamplesOpen(false);
+            onComparisonTypeChange('image');
+          }}
+        >
+          Image
+        </button>
       </div>
 
       <div className="header__actions">

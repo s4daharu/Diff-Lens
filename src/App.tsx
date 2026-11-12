@@ -10,9 +10,11 @@ import { SourceEditorModal } from './components/SourceEditorModal';
 import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal';
 import { SessionNameModal } from './components/SessionNameModal';
 import { PrintReport } from './components/PrintReport';
+import { ImageComparison } from './components/ImageComparison';
 import { LogoIcon, SwapIcon } from './components/Icons';
 import {
   DEFAULT_OPTIONS,
+  type ComparisonType,
   type DiffOptions,
   type DiffResult,
   type SamplePreset,
@@ -149,6 +151,10 @@ export default function App() {
     (v) => v === true,
   );
   const [theme, setTheme] = useState<Theme>(getInitialTheme);
+  const [comparisonType, setComparisonType] =
+    useState<ComparisonType>('text');
+  const [imageBusy, setImageBusy] = useState(false);
+  const [imageResetToken, setImageResetToken] = useState(0);
 
   const [result, setResult] = useState<DiffResult | null>(null);
   const [computing, setComputing] = useState(false);
@@ -268,13 +274,14 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (comparisonType !== 'text') return;
     ensureWorker();
     return () => {
       window.clearTimeout(workerWatchdogRef.current);
       workerRef.current?.terminate();
       workerRef.current = null;
     };
-  }, [ensureWorker]);
+  }, [comparisonType, ensureWorker]);
 
   useEffect(() => {
     if (options.context !== 0) {
@@ -288,7 +295,7 @@ export default function App() {
   );
 
   useEffect(() => {
-    if (!syntaxEnabled) {
+    if (comparisonType !== 'text' || !syntaxEnabled) {
       setTokenizer(null);
       return;
     }
@@ -299,10 +306,15 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [syntaxEnabled, syntaxLang, theme]);
+  }, [comparisonType, syntaxEnabled, syntaxLang, theme]);
   useEffect(() => {
     window.clearTimeout(workerWatchdogRef.current);
     workerWatchdogRef.current = undefined;
+    if (comparisonType !== 'text') {
+      seqRef.current++;
+      setComputing(false);
+      return;
+    }
     if (!sourceReady.old || !sourceReady.new) {
       seqRef.current++;
       setResult(null);
@@ -335,6 +347,7 @@ export default function App() {
     }, DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
   }, [
+    comparisonType,
     oldText,
     newText,
     options,
@@ -353,6 +366,7 @@ export default function App() {
   }, [oldText, newText, options.context]);
 
   useEffect(() => {
+    if (comparisonType !== 'text') return;
     const hasFiles = (e: DragEvent) =>
       Array.from(e.dataTransfer?.types ?? []).includes('Files');
     let dragCounter = 0;
@@ -408,7 +422,7 @@ export default function App() {
       window.removeEventListener('drop', onDrop);
       window.removeEventListener('dragend', onDragLeave);
     };
-  }, [showToast]);
+  }, [comparisonType, showToast]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -775,7 +789,15 @@ export default function App() {
 
   useEffect(() => {
     const onBeforePrint = () => {
-      if (!comparisonReady || !result || result.aborted || printReport) return;
+      if (
+        comparisonType !== 'text' ||
+        !comparisonReady ||
+        !result ||
+        result.aborted ||
+        printReport
+      ) {
+        return;
+      }
       flushSync(() => {
         setPrintReport({
           viewMode,
@@ -790,7 +812,7 @@ export default function App() {
       window.removeEventListener('beforeprint', onBeforePrint);
       window.removeEventListener('afterprint', onAfterPrint);
     };
-  }, [comparisonReady, printReport, result, viewMode]);
+  }, [comparisonReady, comparisonType, printReport, result, viewMode]);
 
   const identical =
     result?.stats != null &&
@@ -1045,6 +1067,7 @@ export default function App() {
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      if (comparisonType !== 'text') return;
       // Ignore if user is currently typing in an input or textarea
       const target = e.target as HTMLElement;
       const inInput =
@@ -1145,6 +1168,7 @@ export default function App() {
     handleEditSources,
     handleUndoMerge,
     handleRedoMerge,
+    comparisonType,
     comparisonReady,
     sourceReady,
     result,
@@ -1208,15 +1232,44 @@ export default function App() {
           themeOverridden.current = true;
           setTheme((t) => (t === 'dark' ? 'light' : 'dark'));
         }}
-        onNewDiff={handleNewDiff}
-        busy={computing}
-        onSelectPreset={handleSelectPreset}
-        onOpenShortcuts={() => setShortcutsOpen(true)}
-        onImportSession={handleImportSession}
+        comparisonType={comparisonType}
+        onComparisonTypeChange={(nextType) => {
+          setComparisonType(nextType);
+          setGlobalDrag(false);
+          setShortcutsOpen(false);
+          setSearchOpen(false);
+          setEditorOpen(false);
+          setSessionNameDialogOpen(false);
+          setPrintReport(null);
+        }}
+        onNewDiff={
+          comparisonType === 'text'
+            ? handleNewDiff
+            : () => setImageResetToken((token) => token + 1)
+        }
+        busy={comparisonType === 'text' ? computing : imageBusy}
+        onSelectPreset={
+          comparisonType === 'text' ? handleSelectPreset : undefined
+        }
+        onOpenShortcuts={
+          comparisonType === 'text'
+            ? () => setShortcutsOpen(true)
+            : undefined
+        }
+        onImportSession={
+          comparisonType === 'text' ? handleImportSession : undefined
+        }
       />
 
+      <div
+        className="text-comparison-shell"
+        hidden={comparisonType !== 'text'}
+      >
       {!comparisonReady ? (
-        <main id="main-content" className="main main--landing">
+        <main
+          id={comparisonType === 'text' ? 'main-content' : undefined}
+          className="main main--landing"
+        >
           <div className="panels">{inputPanels}</div>
 
           <section className="empty" aria-live="polite">
@@ -1239,7 +1292,10 @@ export default function App() {
           </section>
         </main>
       ) : (
-        <main id="main-content" className="main main--workspace">
+        <main
+          id={comparisonType === 'text' ? 'main-content' : undefined}
+          className="main main--workspace"
+        >
           <SourcesBar
             oldText={oldText}
             newText={newText}
@@ -1360,8 +1416,19 @@ export default function App() {
           </p>
         </footer>
       )}
+      </div>
 
-      {printReport && result && !result.aborted && (
+      <ImageComparison
+        active={comparisonType === 'image'}
+        resetToken={imageResetToken}
+        onBusyChange={setImageBusy}
+        onError={showToast}
+      />
+
+      {comparisonType === 'text' &&
+        printReport &&
+        result &&
+        !result.aborted && (
         <PrintReport
           rows={printRows}
           stats={result.stats}
@@ -1375,7 +1442,7 @@ export default function App() {
         />
       )}
 
-      {globalDrag && (
+      {comparisonType === 'text' && globalDrag && (
         <div className="drop-overlay" aria-hidden="true">
           Drop to compare — left half fills Original, right half fills Changed
         </div>
@@ -1424,7 +1491,11 @@ export default function App() {
       )}
 
       <SessionNameModal
-        isOpen={comparisonReady && sessionNameDialogOpen}
+        isOpen={
+          comparisonType === 'text' &&
+          comparisonReady &&
+          sessionNameDialogOpen
+        }
         initialName={
           sessionName ??
           (fileNames.old || fileNames.new
@@ -1436,7 +1507,7 @@ export default function App() {
       />
 
       <SourceEditorModal
-        isOpen={comparisonReady && editorOpen}
+        isOpen={comparisonType === 'text' && comparisonReady && editorOpen}
         onClose={handleCloseEditor}
         oldText={oldText}
         newText={newText}
@@ -1461,7 +1532,7 @@ export default function App() {
       />
 
       <KeyboardShortcutsModal
-        isOpen={shortcutsOpen}
+        isOpen={comparisonType === 'text' && shortcutsOpen}
         onClose={() => setShortcutsOpen(false)}
       />
     </div>

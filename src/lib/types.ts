@@ -1,3 +1,4 @@
+export type ComparisonType = 'text' | 'image';
 export type Granularity = 'chars' | 'words' | 'smart';
 export type ViewMode = 'side-by-side' | 'inline';
 export type ContextSetting = number | 'all';
