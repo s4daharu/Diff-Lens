@@ -126,7 +126,9 @@ await page.getByRole('button', { name: 'Export options' }).click();
 await page
   .getByRole('menuitem', { name: 'Print / Save PDF — Side by side' })
   .click();
-await page.waitForSelector('.print-report[data-print-layout="side-by-side"]');
+await page.waitForSelector('.print-report[data-print-layout="side-by-side"]', {
+  state: 'attached',
+});
 check(
   'side-by-side print action invokes browser print',
   (await page.evaluate(() => window.__diffLensPrintCalls)) === 1,
@@ -527,6 +529,7 @@ await page
   .getByRole('menuitem', { name: 'Print / Save PDF — Side by side' })
   .click();
 await page.waitForSelector('.print-report[data-print-layout="side-by-side"]', {
+  state: 'attached',
   timeout: 10000,
 });
 const reportRowCount = await page.locator(
@@ -977,7 +980,9 @@ check(
 
 await page.getByRole('button', { name: 'Export options' }).click();
 await page.getByRole('menuitem', { name: 'Print / Save PDF — Inline' }).click();
-await page.waitForSelector('.print-report[data-print-layout="inline"]');
+await page.waitForSelector('.print-report[data-print-layout="inline"]', {
+  state: 'attached',
+});
 const reportText = await page.locator('.print-report').textContent();
 check(
   'inline report includes session name and filenames',
