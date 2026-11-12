@@ -96,8 +96,8 @@ const makeImageFixture = async (
       ctx.globalCompositeOperation = 'copy';
       ctx.fillStyle =
         variant === 'changed'
-          ? 'rgba(16, 185, 129, 0.85)'
-          : 'rgba(16, 185, 129, 0.35)';
+          ? 'rgba(0, 255, 0, 0.85)'
+          : 'rgba(0, 255, 0, 0.35)';
       ctx.fillRect(44, 8, 14, 14);
       ctx.restore();
       if (variant === 'changed') {
