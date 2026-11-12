@@ -1,6 +1,7 @@
-import { memo, useMemo, useRef, useState, useEffect } from 'react';
+import { memo, useCallback, useMemo, useRef, useState, useEffect, type RefObject } from 'react';
 import type { ThemedToken } from 'shiki';
 import type { DiffRow, Span, ViewMode } from '../lib/types';
+import { buildVirtualOffsets, getVirtualRange } from '../lib/virtualRows';
 import {
   CopyIcon,
   CheckIcon,
@@ -19,6 +20,174 @@ interface DiffViewProps {
   onExpandGap?: (startRow: number, endRow: number, count: number) => void;
   onCopyNotice?: (msg: string) => void;
   getTokens?: ((line: string) => ThemedToken[] | null) | null;
+}
+
+
+const VIRTUALIZE_THRESHOLD = 800;
+const VIRTUAL_OVERSCAN_PX = 700;
+const BASE_ROW_HEIGHT = 21;
+const GAP_ROW_HEIGHT = 34;
+
+function estimateDiffRowHeight(
+  row: DiffRow,
+  wrap: boolean,
+  charsPerLine: number,
+): number {
+  if (row.kind === 'gap') return GAP_ROW_HEIGHT;
+  if (!wrap) return BASE_ROW_HEIGHT;
+
+  const longest = Math.max(row.oldLine?.length ?? 0, row.newLine?.length ?? 0);
+  const visualLines = Math.max(
+    1,
+    Math.min(24, Math.ceil((longest + 8) / Math.max(20, charsPerLine))),
+  );
+  return visualLines * BASE_ROW_HEIGHT;
+}
+
+function useVirtualWindow<T>(
+  items: T[],
+  scrollRef: RefObject<HTMLDivElement | null>,
+  estimateHeight: (item: T) => number,
+) {
+  const virtualized = items.length > VIRTUALIZE_THRESHOLD;
+  const measurementsRef = useRef(new Map<number, number>());
+  const previousItemsRef = useRef(items);
+  const widthRef = useRef(0);
+  const refreshFrameRef = useRef<number | null>(null);
+  const [measureVersion, setMeasureVersion] = useState(0);
+  const [viewport, setViewport] = useState({ top: 0, height: 0 });
+
+  if (previousItemsRef.current !== items) {
+    previousItemsRef.current = items;
+    measurementsRef.current.clear();
+  }
+
+  const offsets = useMemo(
+    () =>
+      buildVirtualOffsets(
+        items.length,
+        measurementsRef.current,
+        (index) => estimateHeight(items[index]),
+      ),
+    [items, estimateHeight, measureVersion],
+  );
+
+  const scheduleMeasurementRefresh = useCallback(() => {
+    if (refreshFrameRef.current != null) return;
+    refreshFrameRef.current = window.requestAnimationFrame(() => {
+      refreshFrameRef.current = null;
+      setMeasureVersion((version) => version + 1);
+    });
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (refreshFrameRef.current != null) {
+        window.cancelAnimationFrame(refreshFrameRef.current);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+
+    let frame = 0;
+    const updateViewport = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        const width = scroller.clientWidth;
+        if (
+          widthRef.current !== 0 &&
+          widthRef.current !== width &&
+          measurementsRef.current.size > 0
+        ) {
+          measurementsRef.current.clear();
+          setMeasureVersion((version) => version + 1);
+        }
+        widthRef.current = width;
+        setViewport({
+          top: scroller.scrollTop,
+          height: scroller.clientHeight,
+        });
+      });
+    };
+
+    updateViewport();
+    scroller.addEventListener('scroll', updateViewport, { passive: true });
+    const resizeObserver = new ResizeObserver(updateViewport);
+    resizeObserver.observe(scroller);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      scroller.removeEventListener('scroll', updateViewport);
+      resizeObserver.disconnect();
+    };
+  }, [scrollRef, items.length]);
+
+  const range = useMemo(() => {
+    if (!virtualized) {
+      return {
+        start: 0,
+        end: items.length,
+        topPadding: 0,
+        bottomPadding: 0,
+        totalHeight: offsets[offsets.length - 1] ?? 0,
+      };
+    }
+    return getVirtualRange(
+      offsets,
+      viewport.top,
+      Math.max(viewport.height, 600),
+      VIRTUAL_OVERSCAN_PX,
+    );
+  }, [items.length, offsets, viewport, virtualized]);
+
+  const measureRow = useCallback(
+    (index: number, node: HTMLDivElement | null) => {
+      if (!virtualized || !node) return;
+      const height = node.getBoundingClientRect().height;
+      if (!Number.isFinite(height) || height <= 0) return;
+
+      const previous = measurementsRef.current.get(index);
+      if (previous == null || Math.abs(previous - height) > 0.5) {
+        measurementsRef.current.set(index, height);
+        scheduleMeasurementRefresh();
+      }
+    },
+    [scheduleMeasurementRefresh, virtualized],
+  );
+
+  const scrollToIndex = useCallback(
+    (index: number, behavior: ScrollBehavior = 'smooth') => {
+      const scroller = scrollRef.current;
+      const count = items.length;
+      if (!scroller || count === 0) return;
+
+      const safeIndex = Math.max(0, Math.min(count - 1, index));
+      const top = offsets[safeIndex] ?? 0;
+      const bottom = offsets[safeIndex + 1] ?? top + BASE_ROW_HEIGHT;
+      const rowHeight = Math.max(1, bottom - top);
+      const centered = top - Math.max(0, (scroller.clientHeight - rowHeight) / 2);
+      const maxTop = Math.max(
+        0,
+        (offsets[offsets.length - 1] ?? 0) - scroller.clientHeight,
+      );
+      scroller.scrollTo({
+        top: Math.max(0, Math.min(centered, maxTop)),
+        behavior,
+      });
+    },
+    [items.length, offsets, scrollRef],
+  );
+
+  return {
+    virtualized,
+    ...range,
+    measureRow,
+    scrollToIndex,
+  };
 }
 
 function highlightMatches(text: string, query?: string) {
@@ -176,9 +345,13 @@ const RowSide = memo(function RowSide({
 function GapRow({
   row,
   onExpandGap,
+  rowRef,
+  id,
 }: {
   row: DiffRow;
   onExpandGap?: (start: number, end: number, count: number) => void;
+  rowRef?: (node: HTMLDivElement | null) => void;
+  id?: string;
 }) {
   const hasRange = row.gapStartRow != null && row.gapEndRow != null;
   const skipped =
@@ -186,7 +359,7 @@ function GapRow({
     (hasRange ? row.gapEndRow! - row.gapStartRow! + 1 : undefined);
 
   return (
-    <div className="diff-row diff-row--gap" role="row">
+    <div ref={rowRef} id={id} className="diff-row diff-row--gap" role="row">
       <div className="gap-content">
         {hasRange && onExpandGap && (
           <button
@@ -367,17 +540,28 @@ function SideBySide({
   getTokens,
 }: DiffViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const estimateHeight = useCallback(
+    (row: DiffRow) => estimateDiffRowHeight(row, wrap, 90),
+    [wrap],
+  );
+  const virtual = useVirtualWindow(rows, scrollRef, estimateHeight);
 
-  const jumpToRow = (rowIndex: number) => {
-    const el = document.getElementById(`diff-row-side-${rowIndex}`);
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
-  };
+  const jumpToRow = useCallback(
+    (rowIndex: number) => virtual.scrollToIndex(rowIndex),
+    [virtual.scrollToIndex],
+  );
+
+  useEffect(() => {
+    if (activeChangeRowIndex != null) jumpToRow(activeChangeRowIndex);
+  }, [activeChangeRowIndex, jumpToRow]);
+
+  const renderedRows = rows.slice(virtual.start, virtual.end);
 
   return (
     <div
       className={`diff-view diff-view--side${lineNumbers ? '' : ' no-line-nums'}`}
+      data-virtualized={virtual.virtualized ? 'true' : 'false'}
+      data-total-rows={rows.length}
     >
       <div className="diff-col-head">
         {lineNumbers && <span className="ln ln--head" />}
@@ -389,12 +573,30 @@ function SideBySide({
         ref={scrollRef}
         className={`diff-scroll ${wrap ? 'diff-scroll--wrap' : ''}`}
       >
-        <div className="diff-rows-container">
-          {rows.map((row, i) =>
-            row.kind === 'gap' ? (
-              <GapRow key={i} row={row} onExpandGap={onExpandGap} />
+        <div
+          className="diff-rows-container"
+          data-virtualized={virtual.virtualized ? 'true' : 'false'}
+        >
+          {virtual.topPadding > 0 && (
+            <div
+              className="virtual-spacer"
+              style={{ height: virtual.topPadding }}
+              aria-hidden="true"
+            />
+          )}
+          {renderedRows.map((row, localIndex) => {
+            const i = virtual.start + localIndex;
+            return row.kind === 'gap' ? (
+              <GapRow
+                key={i}
+                id={`diff-row-side-${i}`}
+                row={row}
+                onExpandGap={onExpandGap}
+                rowRef={(node) => virtual.measureRow(i, node)}
+              />
             ) : (
               <div
+                ref={(node) => virtual.measureRow(i, node)}
                 id={`diff-row-side-${i}`}
                 key={i}
                 className={`diff-row diff-row--${row.kind} ${
@@ -418,13 +620,27 @@ function SideBySide({
                   getTokens={getTokens}
                 />
               </div>
-            ),
+            );
+          })}
+          {virtual.bottomPadding > 0 && (
+            <div
+              className="virtual-spacer"
+              style={{ height: virtual.bottomPadding }}
+              aria-hidden="true"
+            />
           )}
         </div>
         <MinimapGutter rows={rows} onJumpToRow={jumpToRow} />
       </div>
     </div>
   );
+}
+
+interface InlineRenderRow {
+  row: DiffRow;
+  sign: string;
+  subIndex: number;
+  parentRowIndex: number;
 }
 
 function InlineView({
@@ -440,13 +656,8 @@ function InlineView({
   const scrollRef = useRef<HTMLDivElement>(null);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
 
-  const expandedRows = useMemo(() => {
-    const res: {
-      row: DiffRow;
-      sign: string;
-      subIndex: number;
-      parentRowIndex: number;
-    }[] = [];
+  const expandedRows = useMemo<InlineRenderRow[]>(() => {
+    const res: InlineRenderRow[] = [];
     rows.forEach((row, parentIndex) => {
       if (row.kind === 'modified') {
         res.push({
@@ -478,15 +689,33 @@ function InlineView({
     return res;
   }, [rows]);
 
-  const jumpToRow = (rowIndex: number) => {
-    const el =
-      document.getElementById(`diff-row-inline-p${rowIndex}-0`) ??
-      document.getElementById(`diff-row-inline-p${rowIndex}-1`) ??
-      document.getElementById(`diff-row-inline-p${rowIndex}`);
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
-  };
+  const estimateHeight = useCallback(
+    (item: InlineRenderRow) => estimateDiffRowHeight(item.row, wrap, 140),
+    [wrap],
+  );
+  const virtual = useVirtualWindow(expandedRows, scrollRef, estimateHeight);
+
+  const firstInlineIndexByParent = useMemo(() => {
+    const indexMap = new Map<number, number>();
+    expandedRows.forEach((item, index) => {
+      if (!indexMap.has(item.parentRowIndex)) {
+        indexMap.set(item.parentRowIndex, index);
+      }
+    });
+    return indexMap;
+  }, [expandedRows]);
+
+  const jumpToRow = useCallback(
+    (rowIndex: number) => {
+      const itemIndex = firstInlineIndexByParent.get(rowIndex);
+      if (itemIndex != null) virtual.scrollToIndex(itemIndex);
+    },
+    [firstInlineIndexByParent, virtual.scrollToIndex],
+  );
+
+  useEffect(() => {
+    if (activeChangeRowIndex != null) jumpToRow(activeChangeRowIndex);
+  }, [activeChangeRowIndex, jumpToRow]);
 
   const handleCopyLine = (text: string, idx: number, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -500,9 +729,13 @@ function InlineView({
       .catch(() => onCopyNotice?.('Clipboard permission denied'));
   };
 
+  const renderedRows = expandedRows.slice(virtual.start, virtual.end);
+
   return (
     <div
       className={`diff-view diff-view--inline${lineNumbers ? '' : ' no-line-nums'}`}
+      data-virtualized={virtual.virtualized ? 'true' : 'false'}
+      data-total-rows={expandedRows.length}
     >
       <div className="diff-col-head diff-col-head--inline">
         {lineNumbers && <span className="ln ln--head" title="Original line #" />}
@@ -514,17 +747,33 @@ function InlineView({
         ref={scrollRef}
         className={`diff-scroll ${wrap ? 'diff-scroll--wrap' : ''}`}
       >
-        <div className="diff-rows-container">
-          {expandedRows.map(({ row, sign, parentRowIndex, subIndex }, i) => {
+        <div
+          className="diff-rows-container"
+          data-virtualized={virtual.virtualized ? 'true' : 'false'}
+        >
+          {virtual.topPadding > 0 && (
+            <div
+              className="virtual-spacer"
+              style={{ height: virtual.topPadding }}
+              aria-hidden="true"
+            />
+          )}
+          {renderedRows.map(({ row, sign, parentRowIndex, subIndex }, localIndex) => {
+            const i = virtual.start + localIndex;
             if (row.kind === 'gap') {
               return (
-                <GapRow key={i} row={row} onExpandGap={onExpandGap} />
+                <GapRow
+                  key={i}
+                  id={`diff-row-inline-p${parentRowIndex}-${subIndex}`}
+                  row={row}
+                  onExpandGap={onExpandGap}
+                  rowRef={(node) => virtual.measureRow(i, node)}
+                />
               );
             }
-            const oldNum =
-              sign === '+' ? null : row.oldNum;
-            const newNum =
-              sign === '-' ? null : row.newNum;
+
+            const oldNum = sign === '+' ? null : row.oldNum;
+            const newNum = sign === '-' ? null : row.newNum;
             const line = sign === '+' ? row.newLine : row.oldLine;
             const spans = sign === '+' ? row.newSpans : row.oldSpans;
             const kind =
@@ -533,11 +782,11 @@ function InlineView({
                   ? 'added'
                   : 'deleted'
                 : row.kind;
-
             const isCopied = copiedIdx === i;
 
             return (
               <div
+                ref={(node) => virtual.measureRow(i, node)}
                 id={`diff-row-inline-p${parentRowIndex}-${subIndex}`}
                 key={i}
                 className={`diff-row diff-row--${kind} ${
@@ -598,6 +847,13 @@ function InlineView({
               </div>
             );
           })}
+          {virtual.bottomPadding > 0 && (
+            <div
+              className="virtual-spacer"
+              style={{ height: virtual.bottomPadding }}
+              aria-hidden="true"
+            />
+          )}
         </div>
         <MinimapGutter rows={rows} onJumpToRow={jumpToRow} />
       </div>
@@ -606,24 +862,6 @@ function InlineView({
 }
 
 export function DiffView(props: DiffViewProps) {
-  useEffect(() => {
-    if (props.activeChangeRowIndex != null) {
-      if (props.viewMode === 'side-by-side') {
-        const el = document.getElementById(
-          `diff-row-side-${props.activeChangeRowIndex}`,
-        );
-        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      } else {
-        // inline modified rows have two sub-rows; prefer the '-' then '+'
-        const el0 = document.getElementById(
-          `diff-row-inline-p${props.activeChangeRowIndex}-0`,
-        );
-        const el = el0 ?? document.getElementById(`diff-row-inline-p${props.activeChangeRowIndex}-1`);
-        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
-    }
-  }, [props.activeChangeRowIndex, props.viewMode]);
-
   return props.viewMode === 'side-by-side' ? (
     <SideBySide {...props} />
   ) : (

@@ -327,21 +327,43 @@ await editSources();
 const droppedVal = await ta.inputValue();
 check('drop anywhere fills left panel', droppedVal === 'dropped left\ncontent\n', droppedVal);
 
-// render cap: very large diffs show the first N rows with a notice
+// very large diffs are windowed instead of truncated or fully mounted
 let huge = '';
 for (let i = 0; i < 25000; i++) huge += `row ${i}\n`;
 await setValue(ta, huge);
 await setValue(ta2, huge);
 await closeEditor();
-await page.waitForSelector('.notice--muted >> text=Showing the first', { timeout: 20000 });
-const capText = await page.locator('.notice--muted').textContent();
-check('render cap notice shows', !!capText && capText.includes('12,000'), capText);
+await page.waitForSelector('.diff-view[data-virtualized="true"]', { timeout: 20000 });
 const rendered = await page.locator('.diff-row--equal').count();
-check('render cap limits rows', rendered >= 11900 && rendered <= 12100, `rows=${rendered}`);
-await page.getByRole('button', { name: 'Render all' }).click();
-await page.waitForTimeout(2000);
-const allRows = await page.locator('.diff-row--equal').count();
-check('render all renders every row', allRows >= 24000, `rows=${allRows}`);
+check(
+  'large diff mounts only a small window',
+  rendered > 0 && rendered < 500,
+  `mounted rows=${rendered}`,
+);
+const virtualMetrics = await page.locator('.diff-scroll').evaluate((el) => ({
+  scrollHeight: el.scrollHeight,
+  clientHeight: el.clientHeight,
+}));
+check(
+  'virtualized diff preserves the full scroll range',
+  virtualMetrics.scrollHeight > virtualMetrics.clientHeight * 20,
+  JSON.stringify(virtualMetrics),
+);
+await page.locator('.diff-scroll').evaluate((el) => {
+  el.scrollTop = el.scrollHeight;
+  el.dispatchEvent(new Event('scroll'));
+});
+await page.waitForTimeout(500);
+const tailText = await page.locator('.diff-row--equal .cell__text').last().textContent();
+check(
+  'virtualized diff can reach the final row',
+  !!tailText && tailText.includes('row 24999'),
+  tailText,
+);
+check(
+  'render-all escape hatch is no longer needed',
+  (await page.getByRole('button', { name: 'Render all' }).count()) === 0,
+);
 
 // uploaded file name appears in the patch header
 await editSources();

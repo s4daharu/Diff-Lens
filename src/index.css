@@ -1282,6 +1282,16 @@ body {
   min-width: max-content;
 }
 
+.virtual-spacer {
+  width: 1px;
+  min-height: 0;
+  pointer-events: none;
+}
+
+.diff-scroll--wrap .virtual-spacer {
+  width: 100%;
+}
+
 .diff-scroll--wrap .diff-rows-container {
   min-width: 0;
   width: 100%;

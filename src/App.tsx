@@ -47,9 +47,7 @@ interface WorkerResponse {
 }
 
 const DEBOUNCE_MS = 250;
-const RENDER_CAP = 12000;
 const CHANGE_LIST_CAP = 400;
-const SYNTAX_ROW_CAP = 4000;
 
 function usePersistedState<T>(
   key: string,
@@ -127,7 +125,6 @@ export default function App() {
   const [copiedMarkdown, setCopiedMarkdown] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [toastUndo, setToastUndo] = useState<(() => void) | null>(null);
-  const [renderAll, setRenderAll] = useState(false);
   const [globalDrag, setGlobalDrag] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -351,7 +348,6 @@ export default function App() {
     setOptions(DEFAULT_OPTIONS);
     lastVisibleContextRef.current = DEFAULT_OPTIONS.context;
     setFileNames({ old: null, new: null });
-    setRenderAll(false);
     setExpandedIndices(new Set());
     setCurrentChangeIndex(null);
     setActiveChangeRowIndex(null);
@@ -530,22 +526,18 @@ export default function App() {
     result?.stats != null &&
     result.stats.added + result.stats.removed + result.stats.changed === 0;
 
-  const { rows: visibleRows, totalRows } = useMemo(() => {
-    const all = result
-      ? applyContext(result.rows, options.context, expandedIndices)
-      : [];
-    if (renderAll || all.length <= RENDER_CAP) {
-      return { rows: all, totalRows: all.length };
-    }
-    return { rows: all.slice(0, RENDER_CAP), totalRows: all.length };
-  }, [result, options.context, expandedIndices, renderAll]);
+  const visibleRows = useMemo(
+    () =>
+      result ? applyContext(result.rows, options.context, expandedIndices) : [],
+    [result, options.context, expandedIndices],
+  );
 
-  // Syntax highlighting only for reasonably sized diffs (tokenization is
-  // cached per line, but the first pass still costs O(unique lines))
-  const getTokens = useMemo(() => {
-    if (!tokenizer || visibleRows.length > SYNTAX_ROW_CAP) return null;
-    return (line: string) => tokenizer.getTokens(line);
-  }, [tokenizer, visibleRows.length]);
+  // DiffView virtualizes large result sets, so syntax highlighting can stay
+  // lazy and only tokenize the rows that are actually mounted.
+  const getTokens = useMemo(
+    () => (tokenizer ? (line: string) => tokenizer.getTokens(line) : null),
+    [tokenizer],
+  );
 
   // Outline of every change row in the visible diff, for the sidebar list
   const changeEntries = useMemo<ChangeEntry[]>(() => {
@@ -854,21 +846,6 @@ export default function App() {
                 />
               )}
 
-              {totalRows > RENDER_CAP && !renderAll && (
-                <div className="notice notice--muted">
-                  Showing the first {RENDER_CAP.toLocaleString()} of{' '}
-                  {totalRows.toLocaleString()} rows — rendering all may be
-                  slow for very large diffs.
-                  <button
-                    type="button"
-                    className="btn btn--small"
-                    style={{ marginLeft: 8 }}
-                    onClick={() => setRenderAll(true)}
-                  >
-                    Render all
-                  </button>
-                </div>
-              )}
             </section>
           </div>
         </main>

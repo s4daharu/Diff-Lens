@@ -12,6 +12,7 @@ import {
 } from '../src/lib/diffEngine';
 import type { DiffOptions } from '../src/lib/types';
 import { applyPatch } from 'diff';
+import { buildVirtualOffsets, findVirtualIndex, getVirtualRange } from '../src/lib/virtualRows';
 
 const base: DiffOptions = {
   ignoreCase: false,
@@ -302,6 +303,34 @@ console.log('--- context gaps at file boundaries ---');
   check('context-zero patch still applies', applyPatch(oldText, buildUnifiedPatch(r.rows, 0)) === newText);
   const expanded = applyContext(r.rows, 0, new Set([0, 1, 3, 4]));
   check('all boundary gaps can expand', expanded.length === 5 && expanded.every((row) => row.kind !== 'gap'), expanded);
+}
+
+console.log('--- virtual row layout ---');
+{
+  const measured = new Map<number, number>([[1, 40]]);
+  const offsets = buildVirtualOffsets(4, measured, () => 20);
+  check(
+    'virtual offsets include measured row heights',
+    offsets.join(',') === '0,20,60,80,100',
+    offsets,
+  );
+  check('virtual index lookup finds measured row', findVirtualIndex(offsets, 45) === 1);
+  const range = getVirtualRange(offsets, 45, 20, 0);
+  check(
+    'virtual range includes viewport rows',
+    range.start === 1 &&
+      range.end === 3 &&
+      range.topPadding === 20 &&
+      range.bottomPadding === 20 &&
+      range.totalHeight === 100,
+    range,
+  );
+  const overscanned = getVirtualRange(offsets, 45, 20, 20);
+  check(
+    'virtual range overscans both directions',
+    overscanned.start === 1 && overscanned.end === 4,
+    overscanned,
+  );
 }
 
 console.log('--- patch round-trip ---');
