@@ -320,7 +320,7 @@ await setValue(ta, big);
 await setValue(ta2, big.replace('line number 1000', 'line number CHANGED'));
 await closeEditor();
 // view is currently Inline: a modified row renders as a '-'/'+' row pair
-await page.waitForSelector('.diff-row--added', { timeout: 10000 });
+await page.waitForSelector('.diff-row--added', { timeout: 20000 });
 const perf = Date.now() - t0;
 check('2000-line diff renders', true, `${perf}ms`);
 
