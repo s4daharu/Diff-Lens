@@ -160,10 +160,10 @@ check('case-differing texts show as different (no identical banner)', msgCount =
 // export menu: copy patch enabled, download works
 await page.getByRole('button', { name: 'Export options' }).click();
 await page.waitForSelector('.dropdown-menu');
-const copyItem = page.getByRole('button', { name: 'Copy patch' });
+const copyItem = page.getByRole('menuitem', { name: 'Copy patch' });
 check('copy patch enabled', await copyItem.isEnabled());
 const downloadPromise = page.waitForEvent('download');
-await page.getByRole('button', { name: 'Download .patch' }).click();
+await page.getByRole('menuitem', { name: 'Download .patch' }).click();
 const download = await downloadPromise;
 check('download works', download.suggestedFilename() === 'diff.patch', download.suggestedFilename());
 
@@ -357,7 +357,7 @@ await page.waitForTimeout(800);
 await closeEditor();
 const dl2Promise = page.waitForEvent('download');
 await page.getByRole('button', { name: 'Export options' }).click();
-await page.getByRole('button', { name: 'Download .patch' }).click();
+await page.getByRole('menuitem', { name: 'Download .patch' }).click();
 const dl2 = await dl2Promise;
 const dl2Path = await dl2.path();
 const patchText = readFileSync(dl2Path, 'utf8');
