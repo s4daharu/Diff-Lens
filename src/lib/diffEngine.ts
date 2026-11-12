@@ -154,15 +154,17 @@ function pushSpan(
   });
 }
 
-function consumeUnits(
-  units: { raw: string }[],
+function pushUnitRange(
+  spans: Span[],
+  units: { raw: string; ignoredBefore: string }[],
   start: number,
   count: number,
-): string {
-  return units
-    .slice(start, start + count)
-    .map((unit) => unit.raw)
-    .join('');
+  flag?: 'added' | 'removed',
+): void {
+  for (const unit of units.slice(start, start + count)) {
+    pushSpan(spans, unit.ignoredBefore);
+    pushSpan(spans, unit.raw, flag);
+  }
 }
 
 function maskedIntraLineSpans(
@@ -191,26 +193,21 @@ function maskedIntraLineSpans(
   for (const part of parts) {
     const count = part.value.length;
     if (part.added) {
-      pushSpan(
-        newSpans,
-        consumeUnits(newMasked.units, newIndex, count),
-        'added',
-      );
+      pushUnitRange(newSpans, newMasked.units, newIndex, count, 'added');
       newIndex += count;
     } else if (part.removed) {
-      pushSpan(
-        oldSpans,
-        consumeUnits(oldMasked.units, oldIndex, count),
-        'removed',
-      );
+      pushUnitRange(oldSpans, oldMasked.units, oldIndex, count, 'removed');
       oldIndex += count;
     } else {
-      pushSpan(oldSpans, consumeUnits(oldMasked.units, oldIndex, count));
-      pushSpan(newSpans, consumeUnits(newMasked.units, newIndex, count));
+      pushUnitRange(oldSpans, oldMasked.units, oldIndex, count);
+      pushUnitRange(newSpans, newMasked.units, newIndex, count);
       oldIndex += count;
       newIndex += count;
     }
   }
+
+  pushSpan(oldSpans, oldMasked.trailingIgnored);
+  pushSpan(newSpans, newMasked.trailingIgnored);
 
   return { oldSpans, newSpans };
 }

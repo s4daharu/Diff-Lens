@@ -3,8 +3,6 @@ import type { IgnoreRule } from './types';
 export const MAX_IGNORE_RULES = 20;
 export const MAX_LITERAL_PATTERN_LENGTH = 500;
 export const MAX_REGEX_PATTERN_LENGTH = 160;
-const IGNORE_SENTINEL = '\uE000';
-
 export interface CompiledIgnoreRule {
   kind: IgnoreRule['kind'];
   pattern: string;
@@ -12,8 +10,8 @@ export interface CompiledIgnoreRule {
 }
 
 export interface MaskedUnit {
-  masked: string;
   raw: string;
+  ignoredBefore: string;
 }
 
 export function validateIgnoreRule(rule: IgnoreRule): string | null {
@@ -111,9 +109,9 @@ export function maskIgnoredText(
   let masked = value;
   for (const rule of rules) {
     if (rule.kind === 'literal') {
-      masked = masked.split(rule.pattern).join(IGNORE_SENTINEL);
+      masked = masked.split(rule.pattern).join('');
     } else {
-      masked = masked.replace(rule.regex!, IGNORE_SENTINEL);
+      masked = masked.replace(rule.regex!, '');
     }
   }
   return masked;
@@ -150,30 +148,48 @@ function findRanges(
 export function maskIgnoredUnits(
   value: string,
   rules: CompiledIgnoreRule[],
-): { text: string; units: MaskedUnit[] } {
-  let units: MaskedUnit[] = value.split('').map((raw) => ({
-    masked: raw,
+): { text: string; units: MaskedUnit[]; trailingIgnored: string } {
+  const source = value.split('').map((raw) => ({
     raw,
+    ignored: false,
   }));
 
   for (const rule of rules) {
-    const masked = units.map((unit) => unit.masked).join('');
-    const ranges = findRanges(masked, rule);
-    for (let i = ranges.length - 1; i >= 0; i--) {
-      const [start, end] = ranges[i];
-      const raw = units
-        .slice(start, end)
-        .map((unit) => unit.raw)
-        .join('');
-      units.splice(start, end - start, {
-        masked: IGNORE_SENTINEL,
-        raw,
-      });
+    const visibleMap: number[] = [];
+    let visible = '';
+    source.forEach((unit, sourceIndex) => {
+      if (!unit.ignored) {
+        visibleMap.push(sourceIndex);
+        visible += unit.raw;
+      }
+    });
+
+    const ranges = findRanges(visible, rule);
+    for (const [start, end] of ranges) {
+      for (let index = start; index < end; index++) {
+        const sourceIndex = visibleMap[index];
+        if (sourceIndex != null) source[sourceIndex].ignored = true;
+      }
     }
   }
 
+  const units: MaskedUnit[] = [];
+  let pendingIgnored = '';
+  for (const unit of source) {
+    if (unit.ignored) {
+      pendingIgnored += unit.raw;
+      continue;
+    }
+    units.push({
+      raw: unit.raw,
+      ignoredBefore: pendingIgnored,
+    });
+    pendingIgnored = '';
+  }
+
   return {
-    text: units.map((unit) => unit.masked).join(''),
+    text: units.map((unit) => unit.raw).join(''),
     units,
+    trailingIgnored: pendingIgnored,
   };
 }
