@@ -7,6 +7,7 @@ import { DiffSidebar } from './components/DiffSidebar';
 import { DiffView } from './components/DiffView';
 import { SourceEditorModal } from './components/SourceEditorModal';
 import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal';
+import { SessionNameModal } from './components/SessionNameModal';
 import { LogoIcon, SwapIcon } from './components/Icons';
 import {
   DEFAULT_OPTIONS,
@@ -35,6 +36,13 @@ import {
   type LineTokenizer,
 } from './lib/highlighter';
 import { MAX_FILE_BYTES } from './components/InputPanel';
+import {
+  MAX_SESSION_FILE_BYTES,
+  createComparisonSession,
+  parseComparisonSession,
+  serializeComparisonSession,
+  sessionFileName,
+} from './lib/session';
 
 type Theme = 'light' | 'dark';
 
@@ -135,6 +143,8 @@ export default function App() {
   const [activeChangeEndRowIndex, setActiveChangeEndRowIndex] = useState<number | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sessionNameDialogOpen, setSessionNameDialogOpen] = useState(false);
+  const [sessionName, setSessionName] = useState<string | null>(null);
   const [syntaxEnabled, setSyntaxEnabled] = usePersistedState(
     storageKeys.syntax,
     true,
@@ -356,12 +366,15 @@ export default function App() {
     const prevNames = fileNames;
     const prevOptions = options;
     const prevReady = sourceReady;
+    const prevSessionName = sessionName;
     setOldText('');
     setNewText('');
     setOptions(DEFAULT_OPTIONS);
     lastVisibleContextRef.current = DEFAULT_OPTIONS.context;
     setFileNames({ old: null, new: null });
     setSourceReady({ old: false, new: false });
+    setSessionName(null);
+    setSessionNameDialogOpen(false);
     setSidebarOpen(false);
     setExpandedIndices(new Set());
     setCurrentChangeIndex(null);
@@ -381,6 +394,7 @@ export default function App() {
         setNewText(prevNew);
         setFileNames(prevNames);
         setSourceReady(prevReady);
+        setSessionName(prevSessionName);
         setOptions(prevOptions);
         save(storageKeys.oldText, prevOld);
         save(storageKeys.newText, prevNew);
@@ -397,13 +411,22 @@ export default function App() {
       }, 6000);
       toastTimerRef.current = id;
     }
-  }, [setOptions, oldText, newText, fileNames, options, sourceReady]);
+  }, [
+    setOptions,
+    oldText,
+    newText,
+    fileNames,
+    options,
+    sourceReady,
+    sessionName,
+  ]);
 
   const handleLoadSample = useCallback(() => {
     setOldText(SAMPLE_ORIGINAL);
     setNewText(SAMPLE_CHANGED);
     setFileNames({ old: null, new: null });
     setSourceReady({ old: true, new: true });
+    setSessionName(null);
     setExpandedIndices(new Set());
   }, []);
 
@@ -412,6 +435,7 @@ export default function App() {
     setNewText(preset.newText);
     setFileNames({ old: preset.oldName, new: preset.newName });
     setSourceReady({ old: true, new: true });
+    setSessionName(null);
     setExpandedIndices(new Set());
   }, []);
 
@@ -468,6 +492,64 @@ export default function App() {
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }, []);
 
+  const handleImportSession = useCallback(
+    async (file: File) => {
+      if (file.size > MAX_SESSION_FILE_BYTES) {
+        showToast('Could not open session: the file is larger than 32 MB.');
+        return;
+      }
+
+      try {
+        const session = parseComparisonSession(await file.text());
+        const { original, changed } = session.sources;
+        const preferences = session.preferences;
+
+        setOldText(original.text);
+        setNewText(changed.text);
+        setFileNames({ old: original.name, new: changed.name });
+        setSourceReady({ old: original.ready, new: changed.ready });
+        setSessionName(session.name);
+        setOptions(preferences.options);
+        setViewMode(preferences.viewMode);
+        setWrap(preferences.wrap);
+        setLineNumbers(preferences.lineNumbers);
+        setSyntaxEnabled(preferences.syntaxEnabled);
+        lastVisibleContextRef.current =
+          preferences.options.context === 0
+            ? 'all'
+            : preferences.options.context;
+        setExpandedIndices(new Set());
+        setCurrentChangeIndex(null);
+        setActiveChangeRowIndex(null);
+        setActiveChangeEndRowIndex(null);
+        setSidebarOpen(false);
+        setSearchOpen(false);
+        setSearchQuery('');
+        setEditorOpen(false);
+        setSessionNameDialogOpen(false);
+
+        save(storageKeys.oldText, original.text);
+        save(storageKeys.newText, changed.text);
+        save(storageKeys.options, preferences.options);
+        showToast(`Loaded session “${session.name}”`);
+      } catch (error) {
+        showToast(
+          error instanceof Error
+            ? error.message
+            : 'Could not open session: the file is invalid.',
+        );
+      }
+    },
+    [
+      setLineNumbers,
+      setOptions,
+      setSyntaxEnabled,
+      setViewMode,
+      setWrap,
+      showToast,
+    ],
+  );
+
   const handleDownloadPatch = useCallback(() => {
     if (patch === null) return;
     const blob = new Blob([patch], { type: 'text/plain' });
@@ -475,6 +557,52 @@ export default function App() {
       name ? name.replace(/\.[^./\\]+$/, '') : 'diff';
     triggerDownload(blob, `${base(fileNames.new)}.patch`);
   }, [patch, fileNames.new, triggerDownload]);
+
+  const handleSaveSession = useCallback(
+    (name: string) => {
+      try {
+        const session = createComparisonSession({
+          name,
+          oldText,
+          newText,
+          oldName: fileNames.old,
+          newName: fileNames.new,
+          oldReady: sourceReady.old,
+          newReady: sourceReady.new,
+          options,
+          viewMode,
+          wrap,
+          lineNumbers,
+          syntaxEnabled,
+        });
+        const serialized = serializeComparisonSession(session);
+        triggerDownload(
+          new Blob([serialized], { type: 'application/json' }),
+          sessionFileName(session.name),
+        );
+        setSessionName(session.name);
+        setSessionNameDialogOpen(false);
+        showToast(`Saved session “${session.name}”`);
+      } catch (error) {
+        showToast(
+          error instanceof Error ? error.message : 'Could not save session.',
+        );
+      }
+    },
+    [
+      fileNames,
+      lineNumbers,
+      newText,
+      oldText,
+      options,
+      showToast,
+      sourceReady,
+      syntaxEnabled,
+      triggerDownload,
+      viewMode,
+      wrap,
+    ],
+  );
 
   const handleExportHtml = useCallback(() => {
     if (!result || result.rows.length === 0) return;
@@ -779,6 +907,7 @@ export default function App() {
         busy={computing}
         onSelectPreset={handleSelectPreset}
         onOpenShortcuts={() => setShortcutsOpen(true)}
+        onImportSession={handleImportSession}
       />
 
       {!comparisonReady ? (
@@ -812,6 +941,7 @@ export default function App() {
             oldName={fileNames.old}
             newName={fileNames.new}
             identical={!!identical}
+            sessionName={sessionName}
             editorOpen={editorOpen}
             onEdit={handleEditSources}
             onSwap={handleSwap}
@@ -861,6 +991,7 @@ export default function App() {
                 onDownloadPatch={handleDownloadPatch}
                 onCopyMarkdown={handleCopyMarkdown}
                 onExportHtml={handleExportHtml}
+                onSaveSession={() => setSessionNameDialogOpen(true)}
                 patchReady={patch !== null}
                 copied={copied}
                 copiedMarkdown={copiedMarkdown}
@@ -959,6 +1090,18 @@ export default function App() {
           </button>
         </div>
       )}
+
+      <SessionNameModal
+        isOpen={comparisonReady && sessionNameDialogOpen}
+        initialName={
+          sessionName ??
+          (fileNames.old || fileNames.new
+            ? `${fileNames.old ?? 'Original'} vs ${fileNames.new ?? 'Changed'}`
+            : 'Comparison')
+        }
+        onClose={() => setSessionNameDialogOpen(false)}
+        onSave={handleSaveSession}
+      />
 
       <SourceEditorModal
         isOpen={comparisonReady && editorOpen}

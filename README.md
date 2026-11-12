@@ -14,12 +14,13 @@ with all diff computation happening in a Web Worker.
 - Intra-line highlighting at character or word granularity
 - Landing screen with dual input panels; once a diff exists, sources collapse
   into an "Edit sources" drawer
-- Change outline list — click any change to jump straight to it
-- Difference minimap gutter with click-to-jump
+- Change-section outline — navigate contiguous edit hunks instead of stepping line by line
+- Difference minimap gutter with pointer and keyboard navigation
 - Paste text, open files (up to 10 MB), or drag & drop
 - Ignore case / whitespace / line endings (CRLF) options
 - Adjustable context lines with hidden-region collapse
 - Diff stats, find-in-diff, unified `.patch` / Markdown / HTML report export
+- Named `.difflens.json` comparison sessions for local import/export of both sources and view preferences
 - Dark mode, wrap toggle, line numbers toggle
 - Inputs and preferences persisted in `localStorage`
 
@@ -32,7 +33,7 @@ with all diff computation happening in a Web Worker.
 | `Ctrl/⌘ + S` | Download `.patch` |
 | `Ctrl/⌘ + F` | Find within diff |
 | `Ctrl/⌘ + E` | Open the source editor |
-| `Alt + N` / `Alt + P` | Next / previous difference |
+| `Alt + N` / `Alt + P` | Next / previous change section |
 | `←` / `→` | Switch view from the view-mode tabs |
 
 ## Getting started
