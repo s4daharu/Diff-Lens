@@ -172,7 +172,9 @@ await page.waitForTimeout(100);
 check('print report unmounts after printing', (await page.locator('.print-report').count()) === 0);
 
 await page.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
-await page.waitForSelector('.print-report[data-print-layout="side-by-side"]');
+await page.waitForSelector('.print-report[data-print-layout="side-by-side"]', {
+  state: 'attached',
+});
 check(
   'native browser print builds report for the current view',
   (await page.locator('.print-report').count()) === 1,
