@@ -186,6 +186,44 @@ console.log('--- custom ignore rules and smart precision ---');
     mixed.rows[0],
   );
 
+  const literalIgnored = computeDiff(
+    'request DEBUG payload\n',
+    'request payload\n',
+    {
+      ...base,
+      ignoreRules: [
+        { kind: 'literal', pattern: 'DEBUG ', enabled: true },
+      ],
+    },
+  );
+  check(
+    'literal ignore masks fixed noise',
+    literalIgnored.stats?.unchanged === 1,
+    literalIgnored.stats,
+  );
+
+  const uuidIgnored = computeDiff(
+    'build=10429 id=550e8400-e29b-41d4-a716-446655440000\n',
+    'build=10439 id=7d444840-9dc0-11d1-b245-5ffdce74fad2\n',
+    {
+      ...base,
+      ignoreRules: [
+        { kind: 'regex', pattern: 'build=\\d+', enabled: true },
+        {
+          kind: 'regex',
+          pattern:
+            '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',
+          enabled: true,
+        },
+      ],
+    },
+  );
+  check(
+    'regex rules ignore UUID and build-number noise',
+    uuidIgnored.stats?.unchanged === 1,
+    uuidIgnored.stats,
+  );
+
   check(
     'invalid regex is rejected',
     validateIgnoreRule({

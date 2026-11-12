@@ -630,6 +630,10 @@ if ((await lineNumbersButton.getAttribute('aria-pressed')) === 'true') {
 await openSidebarOptions();
 await page.getByLabel('Context lines').selectOption('3');
 await page.getByLabel('Ignore line-ending style').check();
+await page.getByLabel('Granularity').selectOption('smart');
+await page.getByRole('button', { name: '+ Add rule' }).click();
+await page.getByLabel('Ignore rule 1 pattern').fill('CloudMetrics');
+await page.getByLabel('Enable ignore rule 1').check();
 
 const sessionDownloadPromise = page.waitForEvent('download');
 await page.getByRole('button', { name: 'Export options' }).click();

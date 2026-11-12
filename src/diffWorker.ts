@@ -36,23 +36,25 @@ self.onmessage = (e: MessageEvent<DiffRequest>) => {
       options.ignoreWhitespace ||
       options.ignoreLineEndings ||
       options.ignoreRules.some((rule) => rule.enabled);
-    const patchRows = filtersActive
+    const rawResult = filtersActive
       ? computeDiff(oldText, newText, {
           ...DEFAULT_OPTIONS,
           context: options.context,
           granularity: options.granularity,
-        }).rows
-      : result.rows;
-    const patch = buildUnifiedPatch(
-      patchRows,
-      options.context,
-      oldName,
-      newName,
-      {
-        oldNoNewlineAtEof: hasNoNewlineAtEof(oldText),
-        newNoNewlineAtEof: hasNoNewlineAtEof(newText),
-      },
-    );
+        })
+      : result;
+    const patch = rawResult.aborted
+      ? undefined
+      : buildUnifiedPatch(
+          rawResult.rows,
+          options.context,
+          oldName,
+          newName,
+          {
+            oldNoNewlineAtEof: hasNoNewlineAtEof(oldText),
+            newNoNewlineAtEof: hasNoNewlineAtEof(newText),
+          },
+        );
     self.postMessage({ id, ok: true, result, patch } satisfies DiffResponse);
   } catch (err) {
     self.postMessage({
