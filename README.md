@@ -22,6 +22,7 @@ with all diff computation happening in a Web Worker.
 - Ignore case / whitespace / line endings (CRLF) plus ordered literal/regex custom ignore rules
 - Adjustable context lines with hidden-region collapse
 - Diff stats, find-in-diff, unified `.patch` / Markdown / HTML report export
+- Browser-native Print / Save as PDF reports in side-by-side or inline layouts with full non-virtualized report rows
 - Named `.difflens.json` comparison sessions for local import/export of both sources and view preferences
 - Dark mode, wrap toggle, line numbers toggle
 - Inputs and preferences persisted in `localStorage`

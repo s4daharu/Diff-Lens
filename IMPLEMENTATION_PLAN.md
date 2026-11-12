@@ -94,16 +94,16 @@ Acceptance:
 - Undo/redo restores exact source content.
 - Merge actions remain correct after prior merges shift line numbers.
 
-### Milestone 4 — PDF-quality comparison reports
+### Milestone 4 — PDF-quality comparison reports ✅
 
 Goal: make comparisons easy to archive, review, or attach to tickets without introducing server-side rendering.
 
-- [ ] Add a print-focused report layout with session name, filenames, timestamps, active comparison options, stats, and the diff.
-- [ ] Support side-by-side and unified report layouts with sensible page breaks and repeated column headers.
-- [ ] Add a `Print / Save as PDF` export path first, using the browser's native PDF printing to avoid a large PDF dependency.
-- [ ] Evaluate a direct-download PDF library only if native print output cannot meet layout/quality requirements.
-- [ ] Ensure ignored rules and hidden context are disclosed in the report metadata.
-- [ ] Add print CSS regression coverage where feasible and browser checks that the export view contains all expected metadata.
+- [x] Add a print-focused report layout with session name, filenames, timestamps, active comparison options, stats, and the diff.
+- [x] Support side-by-side and unified report layouts with sensible page breaks and repeated column headers.
+- [x] Add a `Print / Save as PDF` export path first, using the browser's native PDF printing to avoid a large PDF dependency.
+- [x] Evaluate a direct-download PDF library only if native print output cannot meet layout/quality requirements. Native browser printing meets the v1 requirements, so no PDF dependency was added.
+- [x] Ensure ignored rules and hidden context are disclosed in the report metadata.
+- [x] Add print CSS regression coverage where feasible and browser checks that the export view contains all expected metadata.
 
 Acceptance:
 - A comparison can be saved as a clean PDF through the browser without sending data anywhere.

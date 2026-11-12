@@ -153,28 +153,28 @@ function InlineRows({ rows }: { rows: DiffRow[] }) {
         ) : null;
 
         if (row.kind === 'modified') {
-          return (
-            <tbody className="print-report__inline-pair" key={index}>
-              <InlineCell
-                sign="-"
-                number={row.oldNum}
-                className="print-report__row--deleted"
-                sourceIndex={index}
-              >
-                {moveBadge}
-                {renderSpans(row.oldSpans, row.oldLine, 'old')}
-              </InlineCell>
-              <InlineCell
-                sign="+"
-                number={row.newNum}
-                className="print-report__row--added"
-                sourceIndex={index}
-              >
-                {moveBadge}
-                {renderSpans(row.newSpans, row.newLine, 'new')}
-              </InlineCell>
-            </tbody>
-          );
+          return [
+            <InlineCell
+              key={`${index}-old`}
+              sign="-"
+              number={row.oldNum}
+              className="print-report__row--deleted print-report__inline-pair-start"
+              sourceIndex={index}
+            >
+              {moveBadge}
+              {renderSpans(row.oldSpans, row.oldLine, 'old')}
+            </InlineCell>,
+            <InlineCell
+              key={`${index}-new`}
+              sign="+"
+              number={row.newNum}
+              className="print-report__row--added print-report__inline-pair-end"
+              sourceIndex={index}
+            >
+              {moveBadge}
+              {renderSpans(row.newSpans, row.newLine, 'new')}
+            </InlineCell>,
+          ];
         }
 
         const added = row.kind === 'added';
@@ -301,13 +301,13 @@ export function PrintReport({
             </tr>
           )}
         </thead>
-        {viewMode === 'side-by-side' ? (
-          <tbody>
+        <tbody>
+          {viewMode === 'side-by-side' ? (
             <SideBySideRows rows={rows} />
-          </tbody>
-        ) : (
-          <InlineRows rows={rows} />
-        )}
+          ) : (
+            <InlineRows rows={rows} />
+          )}
+        </tbody>
       </table>
 
       <footer className="print-report__footer">

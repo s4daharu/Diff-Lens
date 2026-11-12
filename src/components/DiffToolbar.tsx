@@ -33,6 +33,8 @@ interface DiffToolbarProps {
   onDownloadPatch: () => void;
   onCopyMarkdown: () => void;
   onExportHtml: () => void;
+  onPrintReport: (mode: ViewMode) => void;
+  reportReady: boolean;
   onSaveSession: () => void;
   canUndoMerge: boolean;
   canRedoMerge: boolean;
@@ -64,6 +66,8 @@ export function DiffToolbar({
   onDownloadPatch,
   onCopyMarkdown,
   onExportHtml,
+  onPrintReport,
+  reportReady,
   onSaveSession,
   canUndoMerge,
   canRedoMerge,
@@ -337,6 +341,32 @@ export function DiffToolbar({
               >
                 <DownloadIcon size={14} />
                 <span>Download HTML Report</span>
+              </button>
+              <button
+                type="button"
+                className="dropdown-item"
+                role="menuitem"
+                disabled={!reportReady}
+                onClick={() => {
+                  setOpenMenu(null);
+                  onPrintReport('side-by-side');
+                }}
+              >
+                <DownloadIcon size={14} />
+                <span>Print / Save PDF — Side by side</span>
+              </button>
+              <button
+                type="button"
+                className="dropdown-item"
+                role="menuitem"
+                disabled={!reportReady}
+                onClick={() => {
+                  setOpenMenu(null);
+                  onPrintReport('inline');
+                }}
+              >
+                <DownloadIcon size={14} />
+                <span>Print / Save PDF — Inline</span>
               </button>
               <button
                 type="button"

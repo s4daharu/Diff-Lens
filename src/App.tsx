@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { Header } from './components/Header';
 import { InputPanel } from './components/InputPanel';
 import { SourcesBar } from './components/SourcesBar';
@@ -8,6 +9,7 @@ import { DiffView } from './components/DiffView';
 import { SourceEditorModal } from './components/SourceEditorModal';
 import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal';
 import { SessionNameModal } from './components/SessionNameModal';
+import { PrintReport } from './components/PrintReport';
 import { LogoIcon, SwapIcon } from './components/Icons';
 import {
   DEFAULT_OPTIONS,
@@ -68,6 +70,11 @@ const MERGE_HISTORY_LIMIT = 50;
 interface MergeSnapshot {
   oldText: string;
   newText: string;
+}
+
+interface PrintReportRequest {
+  viewMode: ViewMode;
+  generatedAt: string;
 }
 
 function usePersistedState<T>(
@@ -178,6 +185,9 @@ export default function App() {
   }));
   const [mergePast, setMergePast] = useState<MergeSnapshot[]>([]);
   const [mergeFuture, setMergeFuture] = useState<MergeSnapshot[]>([]);
+  const [printReport, setPrintReport] = useState<PrintReportRequest | null>(
+    null,
+  );
 
   const workerRef = useRef<Worker | null>(null);
   const workerWatchdogRef = useRef<number | undefined>(undefined);
@@ -672,6 +682,39 @@ export default function App() {
     ],
   );
 
+  const handlePrintReport = useCallback(
+    (reportViewMode: ViewMode) => {
+      if (!result || result.aborted) return;
+      flushSync(() => {
+        setPrintReport({
+          viewMode: reportViewMode,
+          generatedAt: new Date().toISOString(),
+        });
+      });
+      window.print();
+    },
+    [result],
+  );
+
+  useEffect(() => {
+    const onBeforePrint = () => {
+      if (!comparisonReady || !result || result.aborted || printReport) return;
+      flushSync(() => {
+        setPrintReport({
+          viewMode,
+          generatedAt: new Date().toISOString(),
+        });
+      });
+    };
+    const onAfterPrint = () => setPrintReport(null);
+    window.addEventListener('beforeprint', onBeforePrint);
+    window.addEventListener('afterprint', onAfterPrint);
+    return () => {
+      window.removeEventListener('beforeprint', onBeforePrint);
+      window.removeEventListener('afterprint', onAfterPrint);
+    };
+  }, [comparisonReady, printReport, result, viewMode]);
+
   const handleExportHtml = useCallback(() => {
     if (!result || result.rows.length === 0) return;
     const html = buildHtmlDiffReport({
@@ -757,6 +800,14 @@ export default function App() {
     () =>
       result ? applyContext(result.rows, options.context, expandedIndices) : [],
     [result, options.context, expandedIndices],
+  );
+
+  const printRows = useMemo(
+    () =>
+      printReport && result
+        ? applyContext(result.rows, options.context, expandedIndices)
+        : [],
+    [expandedIndices, options.context, printReport, result],
   );
 
   // DiffView virtualizes large result sets, so syntax highlighting can stay
@@ -1147,7 +1198,7 @@ export default function App() {
   );
 
   return (
-    <div className="app">
+    <div className={`app${printReport ? ' app--print-report' : ''}`}>
       <a href="#main-content" className="skip-link">
         Skip to diff
       </a>
@@ -1252,6 +1303,8 @@ export default function App() {
                 onDownloadPatch={handleDownloadPatch}
                 onCopyMarkdown={handleCopyMarkdown}
                 onExportHtml={handleExportHtml}
+                onPrintReport={handlePrintReport}
+                reportReady={Boolean(result && !result.aborted)}
                 onSaveSession={() => setSessionNameDialogOpen(true)}
                 canUndoMerge={mergePast.length > 0}
                 canRedoMerge={mergeFuture.length > 0}
@@ -1306,6 +1359,20 @@ export default function App() {
             </button>
           </p>
         </footer>
+      )}
+
+      {printReport && result && !result.aborted && (
+        <PrintReport
+          rows={printRows}
+          stats={result.stats}
+          viewMode={printReport.viewMode}
+          sessionName={sessionName}
+          oldName={fileNames.old ?? 'Original'}
+          newName={fileNames.new ?? 'Changed'}
+          generatedAt={printReport.generatedAt}
+          options={options}
+          expandedContextCount={expandedIndices.size}
+        />
       )}
 
       {globalDrag && (

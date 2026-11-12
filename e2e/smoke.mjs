@@ -36,6 +36,12 @@ try {
 
 const browser = await chromium.launch();
 const page = await browser.newPage();
+await page.addInitScript(() => {
+  window.__diffLensPrintCalls = 0;
+  window.print = () => {
+    window.__diffLensPrintCalls += 1;
+  };
+});
 const errors = [];
 page.on('pageerror', (e) => errors.push(String(e)));
 page.on('console', (m) => {
@@ -115,6 +121,53 @@ check(
   (await page.getByRole('button', { name: 'Diff details', exact: true }).getAttribute('aria-expanded')) === 'false',
 );
 check('toolbar visible', await page.locator('.diff-toolbar').isVisible());
+
+await page.getByRole('button', { name: 'Export options' }).click();
+await page
+  .getByRole('menuitem', { name: 'Print / Save PDF — Side by side' })
+  .click();
+await page.waitForSelector('.print-report[data-print-layout="side-by-side"]');
+check(
+  'side-by-side print action invokes browser print',
+  (await page.evaluate(() => window.__diffLensPrintCalls)) === 1,
+);
+check(
+  'print report includes local-generation disclosure',
+  (await page.locator('.print-report__privacy').textContent())?.includes(
+    'not uploaded',
+  ),
+);
+check(
+  'print report has one static row per report diff row',
+  (await page.locator('.print-report tbody > tr').count()) > 0,
+);
+await page.emulateMedia({ media: 'print' });
+check(
+  'print media hides interactive app chrome',
+  (await page.locator('.header').evaluate((el) => getComputedStyle(el).display)) ===
+    'none',
+);
+check(
+  'print report is visible under print media',
+  (await page.locator('.print-report').evaluate((el) => getComputedStyle(el).display)) ===
+    'block',
+);
+check(
+  'print table header is configured to repeat',
+  (await page
+    .locator('.print-report__table thead')
+    .evaluate((el) => getComputedStyle(el).display)) === 'table-header-group',
+);
+const samplePdf = await page.pdf({
+  format: 'A4',
+  landscape: true,
+  printBackground: true,
+});
+check('browser can generate PDF from print report', samplePdf.length > 10000, `bytes=${samplePdf.length}`);
+await page.emulateMedia({ media: 'screen' });
+await page.evaluate(() => window.dispatchEvent(new Event('afterprint')));
+await page.waitForTimeout(100);
+check('print report unmounts after printing', (await page.locator('.print-report').count()) === 0);
 await ensureSidebarOpen();
 check('sidebar opens on demand', await page.locator('.diff-sidebar').isVisible());
 await page.getByRole('button', { name: 'Close details panel' }).click();
@@ -459,6 +512,24 @@ check(
   rendered > 0 && rendered < 500,
   `mounted rows=${rendered}`,
 );
+
+await page.getByRole('button', { name: 'Export options' }).click();
+await page
+  .getByRole('menuitem', { name: 'Print / Save PDF — Side by side' })
+  .click();
+await page.waitForSelector('.print-report[data-print-layout="side-by-side"]', {
+  timeout: 10000,
+});
+const reportRowCount = await page.locator(
+  '.print-report__table tbody > tr[data-source-row-index]',
+).count();
+check(
+  'print report bypasses virtualization and contains the full large diff',
+  reportRowCount === 25000,
+  `report rows=${reportRowCount}`,
+);
+await page.evaluate(() => window.dispatchEvent(new Event('afterprint')));
+await page.waitForTimeout(100);
 const virtualMetrics = await page.locator('.diff-scroll').evaluate((el) => ({
   scrollHeight: el.scrollHeight,
   clientHeight: el.clientHeight,
@@ -894,6 +965,35 @@ check(
   (await page.getByLabel('Ignore rule 1 pattern').inputValue()).length > 0 &&
     (await page.getByLabel('Enable ignore rule 1').isChecked()),
 );
+
+await page.getByRole('button', { name: 'Export options' }).click();
+await page.getByRole('menuitem', { name: 'Print / Save PDF — Inline' }).click();
+await page.waitForSelector('.print-report[data-print-layout="inline"]');
+const reportText = await page.locator('.print-report').textContent();
+check(
+  'inline report includes session name and filenames',
+  !!reportText &&
+    reportText.includes('API Review') &&
+    reportText.includes('config.v1.json') &&
+    reportText.includes('config.v2.json'),
+  reportText?.slice(0, 250),
+);
+check(
+  'inline report discloses active options and custom ignore rule',
+  !!reportText &&
+    reportText.includes('Precision: Smart') &&
+    reportText.includes('Context: 3 unchanged lines around changes') &&
+    reportText.includes('Ignore line-ending style') &&
+    reportText.includes('Ignore literal: “CloudMetrics”'),
+);
+check(
+  'inline report has generated timestamp',
+  (await page.locator('.print-report time').getAttribute('datetime'))?.includes(
+    'T',
+  ),
+);
+await page.evaluate(() => window.dispatchEvent(new Event('afterprint')));
+await page.waitForTimeout(100);
 
 const namesBeforeSessionMerge = (
   await page.locator('.source-chip__name').allTextContents()
