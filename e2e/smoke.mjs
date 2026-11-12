@@ -234,10 +234,19 @@ await page.waitForSelector('.diff-row--added', { timeout: 10000 });
 const perf = Date.now() - t0;
 check('2000-line diff renders', true, `${perf}ms`);
 
-// back to side-by-side: modified rows render as single rows again
+// back to side-by-side: use the change outline to jump to a modification
+// that starts outside the mounted virtual window.
 await page.getByRole('tab', { name: 'Side by side' }).click();
-await page.waitForSelector('.diff-row--modified', { timeout: 5000 });
-check('modified row in side-by-side', (await page.locator('.diff-row--modified').count()) === 1);
+check(
+  '2000-line diff is virtualized',
+  (await page.locator('.diff-view--side').getAttribute('data-virtualized')) === 'true',
+);
+await page.locator('.change-item').first().click();
+await page.waitForSelector('.diff-row--modified.diff-row--active', { timeout: 5000 });
+check(
+  'off-screen change navigation mounts the target row',
+  (await page.locator('.diff-row--modified.diff-row--active').count()) === 1,
+);
 
 // wrap toggle: long line must wrap instead of horizontally scrolling
 const longLine = 'y'.repeat(2000);
