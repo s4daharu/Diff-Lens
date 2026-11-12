@@ -182,8 +182,8 @@ export function DiffSidebar({
               >
                 <span className="diff-nav-label">
                   {currentSectionIndex != null
-                    ? `${currentSectionIndex + 1} of ${totalSections}`
-                    : `${totalSections} ${totalSections === 1 ? 'change' : 'sections'}`}
+                    ? `${currentSectionIndex + 1} of ${totalSections} sections`
+                    : `${totalSections} ${totalSections === 1 ? 'section' : 'sections'}`
                 </span>
                 <button
                   type="button"
@@ -206,7 +206,7 @@ export function DiffSidebar({
               </div>
 
               {sections.length > 0 && (
-                <div className="sections-list" ref={listRef}>
+                <div className="changes-list" ref={listRef}>
                   {sections.map((entry, i) => (
                     <button
                       key={entry.rowIndex}
@@ -231,7 +231,7 @@ export function DiffSidebar({
                     </button>
                   ))}
                   {hiddenSections > 0 && (
-                    <span className="sections-more">
+                    <span className="changes-more">
                       +{hiddenSections.toLocaleString()} more sections not listed
                     </span>
                   )}
