@@ -11,6 +11,10 @@ export interface ChangeSection {
   newNum: number | null;
   newEndNum: number | null;
   count: number;
+  oldStartLine: number;
+  oldEndLine: number;
+  newStartLine: number;
+  newEndLine: number;
   moveId?: number;
   moveRole?: MoveRole;
   moveSimilarity?: number;
@@ -18,7 +22,10 @@ export interface ChangeSection {
   movePeerRowIndex?: number;
 }
 
-export function buildChangeSections(rows: DiffRow[]): ChangeSection[] {
+export function buildChangeSections(
+  rows: DiffRow[],
+  sourceRows: DiffRow[] = rows,
+): ChangeSection[] {
   const sections: ChangeSection[] = [];
   let current: ChangeSection | null = null;
 
@@ -50,6 +57,10 @@ export function buildChangeSections(rows: DiffRow[]): ChangeSection[] {
         newNum: row.newNum,
         newEndNum: row.newNum,
         count: 1,
+        oldStartLine: 0,
+        oldEndLine: 0,
+        newStartLine: 0,
+        newEndLine: 0,
         moveId: row.moveId,
         moveRole: row.moveRole,
         moveSimilarity: row.moveSimilarity,
@@ -68,6 +79,50 @@ export function buildChangeSections(rows: DiffRow[]): ChangeSection[] {
   });
 
   finish();
+
+  const sourceIndexByRow = new Map<DiffRow, number>();
+  sourceRows.forEach((row, index) => sourceIndexByRow.set(row, index));
+
+  const insertionPoint = (
+    sourceStart: number,
+    sourceEnd: number,
+    key: 'oldNum' | 'newNum',
+  ): number => {
+    for (let index = sourceStart - 1; index >= 0; index--) {
+      const line = sourceRows[index]?.[key];
+      if (line != null) return line;
+    }
+    for (let index = sourceEnd + 1; index < sourceRows.length; index++) {
+      const line = sourceRows[index]?.[key];
+      if (line != null) return Math.max(0, line - 1);
+    }
+    return 0;
+  };
+
+  for (const section of sections) {
+    const firstRow = rows[section.rowIndex];
+    const lastRow = rows[section.endRowIndex];
+    const sourceStart = sourceIndexByRow.get(firstRow) ?? section.rowIndex;
+    const sourceEnd = sourceIndexByRow.get(lastRow) ?? sourceStart;
+
+    if (section.oldNum != null && section.oldEndNum != null) {
+      section.oldStartLine = section.oldNum - 1;
+      section.oldEndLine = section.oldEndNum;
+    } else {
+      const point = insertionPoint(sourceStart, sourceEnd, 'oldNum');
+      section.oldStartLine = point;
+      section.oldEndLine = point;
+    }
+
+    if (section.newNum != null && section.newEndNum != null) {
+      section.newStartLine = section.newNum - 1;
+      section.newEndLine = section.newEndNum;
+    } else {
+      const point = insertionPoint(sourceStart, sourceEnd, 'newNum');
+      section.newStartLine = point;
+      section.newEndLine = point;
+    }
+  }
 
   const movedById = new Map<number, ChangeSection[]>();
   for (const section of sections) {

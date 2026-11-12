@@ -16,6 +16,7 @@ import type { DiffOptions } from '../src/lib/types';
 import { applyPatch } from 'diff';
 import { buildVirtualOffsets, findVirtualIndex, getVirtualRange } from '../src/lib/virtualRows';
 import { buildChangeSections } from '../src/lib/changeSections';
+import { mergeChangeSections } from '../src/lib/mergeSections';
 import {
   MAX_MOVE_COMPARISONS,
   detectMovedBlocks,
@@ -584,6 +585,169 @@ console.log('--- moved-block detection ---');
     'fuzzy move comparisons stay bounded on large candidate sets',
     bounded.comparisons <= MAX_MOVE_COMPARISONS,
     bounded.comparisons,
+  );
+}
+
+console.log('--- section merge operations ---');
+{
+  const additionOld = 'alpha\nbeta';
+  const additionNew = 'alpha\nbeta\ngamma';
+  const additionDiff = computeDiff(additionOld, additionNew, base);
+  const additionVisible = applyContext(additionDiff.rows, 0);
+  const additionSections = buildChangeSections(
+    additionVisible,
+    additionDiff.rows,
+  );
+  check(
+    'collapsed addition keeps source insertion point',
+    additionSections[0]?.oldStartLine === 2 &&
+      additionSections[0]?.oldEndLine === 2 &&
+      additionSections[0]?.newStartLine === 2 &&
+      additionSections[0]?.newEndLine === 3,
+    additionSections[0],
+  );
+  const acceptedAddition = mergeChangeSections(
+    additionOld,
+    additionNew,
+    [additionSections[0]],
+    'changed-to-original',
+  );
+  check(
+    'accepting EOF addition preserves missing-final-newline semantics',
+    acceptedAddition.oldText === additionNew,
+    acceptedAddition.oldText,
+  );
+
+  const deletionOld = 'alpha\nbeta\ngamma';
+  const deletionNew = 'alpha\nbeta';
+  const deletionDiff = computeDiff(deletionOld, deletionNew, base);
+  const deletionSection = buildChangeSections(deletionDiff.rows)[0];
+  const acceptedDeletion = mergeChangeSections(
+    deletionOld,
+    deletionNew,
+    [deletionSection],
+    'changed-to-original',
+  );
+  check(
+    'accepting EOF deletion removes the preceding newline when needed',
+    acceptedDeletion.oldText === deletionNew,
+    acceptedDeletion.oldText,
+  );
+
+  const crlfOld = 'one\r\ntwo old\r\nthree\r\n';
+  const crlfNew = 'one\r\ntwo new\r\nthree\r\n';
+  const crlfDiff = computeDiff(crlfOld, crlfNew, base);
+  const crlfSection = buildChangeSections(crlfDiff.rows)[0];
+  const crlfAccepted = mergeChangeSections(
+    crlfOld,
+    crlfNew,
+    [crlfSection],
+    'changed-to-original',
+  );
+  check(
+    'merge preserves CRLF records from accepted source',
+    crlfAccepted.oldText === crlfNew,
+    crlfAccepted.oldText,
+  );
+  const crlfRejected = mergeChangeSections(
+    crlfOld,
+    crlfNew,
+    [crlfSection],
+    'original-to-changed',
+  );
+  check(
+    'reverse merge restores Original into Changed',
+    crlfRejected.newText === crlfOld,
+    crlfRejected.newText,
+  );
+
+  const multiOld = 'top\nold a\nold b\nbottom\n';
+  const multiNew = 'top\nnew a\nnew b\nbottom\n';
+  const multiDiff = computeDiff(multiOld, multiNew, base);
+  const multiSection = buildChangeSections(multiDiff.rows)[0];
+  check(
+    'multi-line modified section has two-line source ranges',
+    multiSection.oldStartLine === 1 &&
+      multiSection.oldEndLine === 3 &&
+      multiSection.newStartLine === 1 &&
+      multiSection.newEndLine === 3,
+    multiSection,
+  );
+  check(
+    'multi-line section accepts Changed into Original',
+    mergeChangeSections(
+      multiOld,
+      multiNew,
+      [multiSection],
+      'changed-to-original',
+    ).oldText === multiNew,
+  );
+
+  const beginOld = 'old first\nkeep\n';
+  const beginNew = 'new first\nkeep\n';
+  const beginSection = buildChangeSections(
+    computeDiff(beginOld, beginNew, base).rows,
+  )[0];
+  check(
+    'beginning-of-file merge uses line zero',
+    beginSection.oldStartLine === 0 &&
+      mergeChangeSections(
+        beginOld,
+        beginNew,
+        [beginSection],
+        'changed-to-original',
+      ).oldText === beginNew,
+    beginSection,
+  );
+
+  const repeatedOld = 'a\nold one\nkeep\nold two\nz\n';
+  const repeatedNew = 'a\nnew one\nkeep\nnew two\nz\n';
+  const firstPass = computeDiff(repeatedOld, repeatedNew, base);
+  const firstSections = buildChangeSections(firstPass.rows);
+  const afterFirst = mergeChangeSections(
+    repeatedOld,
+    repeatedNew,
+    [firstSections[0]],
+    'changed-to-original',
+  ).oldText;
+  const secondPass = computeDiff(afterFirst, repeatedNew, base);
+  const secondSections = buildChangeSections(secondPass.rows);
+  const afterSecond = mergeChangeSections(
+    afterFirst,
+    repeatedNew,
+    [secondSections[0]],
+    'changed-to-original',
+  ).oldText;
+  check(
+    'repeated merges remain correct after line ranges recompute',
+    afterSecond === repeatedNew,
+    afterSecond,
+  );
+
+  const movedOld =
+    'start\nmove alpha payload\nmove beta payload\nanchor one\nanchor two\nanchor three\nend\n';
+  const movedNew =
+    'start\nanchor one\nanchor two\nanchor three\nend\nmove alpha payload\nmove beta payload\n';
+  const movedDetected = detectMovedBlocks(
+    computeDiff(movedOld, movedNew, base).rows,
+  );
+  const movedChangeSections = buildChangeSections(movedDetected.rows);
+  const movedId = movedChangeSections.find(
+    (section) => section.moveId != null,
+  )?.moveId;
+  const movedPair = movedChangeSections.filter(
+    (section) => section.moveId === movedId,
+  );
+  const movedAccepted = mergeChangeSections(
+    movedOld,
+    movedNew,
+    movedPair,
+    'changed-to-original',
+  );
+  check(
+    'moved pair is accepted atomically',
+    movedPair.length === 2 && movedAccepted.oldText === movedNew,
+    { movedPair, merged: movedAccepted.oldText },
   );
 }
 
