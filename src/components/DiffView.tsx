@@ -174,12 +174,20 @@ function useVirtualWindow<T>(
         0,
         (offsets[offsets.length - 1] ?? 0) - scroller.clientHeight,
       );
+      const targetTop = Math.max(0, Math.min(centered, maxTop));
+      const effectiveBehavior = virtualized ? 'auto' : behavior;
       scroller.scrollTo({
-        top: Math.max(0, Math.min(centered, maxTop)),
-        behavior,
+        top: targetTop,
+        behavior: effectiveBehavior,
       });
+      if (virtualized) {
+        setViewport({
+          top: targetTop,
+          height: scroller.clientHeight,
+        });
+      }
     },
-    [items.length, offsets, scrollRef],
+    [items.length, offsets, scrollRef, virtualized],
   );
 
   return {
