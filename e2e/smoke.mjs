@@ -597,7 +597,7 @@ check(
   'session export contains sources and preferences',
   savedSession.format === 'difflens-session' &&
     savedSession.name === 'API Review' &&
-    savedSession.sources?.original?.name === 'config-v1.json' &&
+    savedSession.sources?.original?.name === 'config.v1.json' &&
     savedSession.preferences?.viewMode === 'inline' &&
     savedSession.preferences?.options?.context === 3,
   JSON.stringify(savedSession.preferences),
@@ -633,7 +633,7 @@ check(
 check(
   'session import restores source filenames',
   (await page.locator('.source-chip__name').allTextContents()).join('|') ===
-    'config-v1.json|config-v2.json',
+    'config.v1.json|config.v2.json',
   (await page.locator('.source-chip__name').allTextContents()).join('|'),
 );
 check(
