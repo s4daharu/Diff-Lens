@@ -92,12 +92,15 @@ const makeImageFixture = async (
       ctx.fillStyle = variant === 'changed' ? '#dc2626' : '#2563eb';
       ctx.fillRect(8, 8, 24, 18);
 
-      ctx.fillStyle = 'rgba(16, 185, 129, 0.35)';
+      ctx.save();
+      ctx.globalCompositeOperation = 'copy';
+      ctx.fillStyle =
+        variant === 'changed'
+          ? 'rgba(16, 185, 129, 0.85)'
+          : 'rgba(16, 185, 129, 0.35)';
       ctx.fillRect(44, 8, 14, 14);
+      ctx.restore();
       if (variant === 'changed') {
-        ctx.clearRect(44, 8, 14, 14);
-        ctx.fillStyle = 'rgba(16, 185, 129, 0.85)';
-        ctx.fillRect(44, 8, 14, 14);
         ctx.fillStyle = '#7c3aed';
         ctx.fillRect(66, 46, 16, 12);
       }
