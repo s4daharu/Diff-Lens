@@ -557,8 +557,9 @@ const mergeChanged =
   'new first\nkeep\nnew one\nnew two\nanchor\nnew last';
 await page.locator('.input-panel--left textarea').fill(mergeOriginal);
 await page.locator('.input-panel--right textarea').fill(mergeChanged);
-await page.waitForSelector('.change-item', { timeout: 5000 });
+await page.waitForSelector('.diff-view--side', { timeout: 5000 });
 await ensureSidebarOpen();
+await page.waitForSelector('.change-item', { timeout: 5000 });
 
 await page
   .locator('.change-item-row')
@@ -893,6 +894,27 @@ check(
   (await page.getByLabel('Ignore rule 1 pattern').inputValue()).length > 0 &&
     (await page.getByLabel('Enable ignore rule 1').isChecked()),
 );
+
+const namesBeforeSessionMerge = (
+  await page.locator('.source-chip__name').allTextContents()
+).join('|');
+await page
+  .locator('.change-item-row')
+  .first()
+  .getByRole('button', { name: /Apply Changed .* to Original/ })
+  .click();
+await page.waitForTimeout(700);
+check(
+  'merge keeps session name and source filenames',
+  (await page.locator('.sources-session-name').textContent())?.includes(
+    'API Review',
+  ) &&
+    (await page.locator('.source-chip__name').allTextContents()).join('|') ===
+      namesBeforeSessionMerge &&
+    (await page.locator('.main--workspace').count()) === 1,
+);
+await page.getByRole('button', { name: 'Undo merge' }).click();
+await page.waitForTimeout(700);
 
 // Invalid imports must leave the current comparison intact.
 const invalidChooserPromise = page.waitForEvent('filechooser');

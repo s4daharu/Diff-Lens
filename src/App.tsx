@@ -999,7 +999,9 @@ export default function App() {
       const inInput =
         target &&
         (target.tagName === 'TEXTAREA' ||
-          (target.tagName === 'INPUT' && (target as HTMLInputElement).type === 'text'));
+          target.tagName === 'INPUT' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable);
 
       if (e.key === 'Escape' && searchOpen && !editorOpen) {
         e.preventDefault();
