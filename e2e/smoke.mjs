@@ -559,6 +559,130 @@ await page.waitForTimeout(300);
 const modalClosed = !(await page.locator('.modal-card').isVisible());
 check('shortcuts modal closes on Escape', modalClosed);
 
+// named comparison session round-trip
+await page.getByRole('button', { name: 'New diff' }).click();
+await page.getByRole('button', { name: 'Samples' }).click();
+await page.getByRole('button', { name: /API Config/ }).click();
+await page.waitForSelector('.diff-view--side', { timeout: 5000 });
+await page.getByRole('tab', { name: 'Inline' }).click();
+{
+  const menu = await openViewOptions();
+  const noWrap = menu.getByRole('menuitemcheckbox', { name: 'Disable line wrap' });
+  if ((await noWrap.getAttribute('aria-checked')) === 'true') await noWrap.click();
+}
+const lineNumbersButton = page.getByRole('button', { name: 'Line numbers' });
+if ((await lineNumbersButton.getAttribute('aria-pressed')) === 'true') {
+  await lineNumbersButton.click();
+}
+await openSidebarOptions();
+await page.getByLabel('Context lines').selectOption('3');
+await page.getByLabel('Ignore line-ending style').check();
+
+const sessionDownloadPromise = page.waitForEvent('download');
+await page.getByRole('button', { name: 'Export options' }).click();
+await page.getByRole('menuitem', { name: 'Save comparison session' }).click();
+const sessionDialog = page.getByRole('dialog', { name: 'Save comparison session' });
+await sessionDialog.getByLabel('Session name').fill('API Review');
+await sessionDialog.getByRole('button', { name: 'Save session' }).click();
+const sessionDownload = await sessionDownloadPromise;
+check(
+  'session export uses named .difflens.json file',
+  sessionDownload.suggestedFilename() === 'api-review.difflens.json',
+  sessionDownload.suggestedFilename(),
+);
+const sessionPath = await sessionDownload.path();
+const savedSessionText = readFileSync(sessionPath, 'utf8');
+const savedSession = JSON.parse(savedSessionText);
+check(
+  'session export contains sources and preferences',
+  savedSession.format === 'difflens-session' &&
+    savedSession.name === 'API Review' &&
+    savedSession.sources?.original?.name === 'config-v1.json' &&
+    savedSession.preferences?.viewMode === 'inline' &&
+    savedSession.preferences?.options?.context === 3,
+  JSON.stringify(savedSession.preferences),
+);
+
+// Move the app to different preferences before importing, proving import restores them.
+await page.getByRole('tab', { name: 'Side by side' }).click();
+{
+  const menu = await openViewOptions();
+  const noWrap = menu.getByRole('menuitemcheckbox', { name: 'Disable line wrap' });
+  if ((await noWrap.getAttribute('aria-checked')) !== 'true') await noWrap.click();
+}
+if ((await lineNumbersButton.getAttribute('aria-pressed')) !== 'true') {
+  await lineNumbersButton.click();
+}
+await page.getByLabel('Context lines').selectOption('all');
+await page.getByLabel('Ignore line-ending style').uncheck();
+
+await page.getByRole('button', { name: 'New diff' }).click();
+const sessionChooserPromise = page.waitForEvent('filechooser');
+await page.getByRole('button', { name: 'Open comparison session' }).click();
+const sessionChooser = await sessionChooserPromise;
+await sessionChooser.setFiles({
+  name: 'api-review.difflens.json',
+  mimeType: 'application/json',
+  buffer: Buffer.from(savedSessionText),
+});
+await page.waitForSelector('.diff-view--inline', { timeout: 5000 });
+check(
+  'session import restores its name',
+  (await page.locator('.sources-session-name').textContent())?.includes('API Review'),
+);
+check(
+  'session import restores source filenames',
+  (await page.locator('.source-chip__name').allTextContents()).join('|') ===
+    'config-v1.json|config-v2.json',
+  (await page.locator('.source-chip__name').allTextContents()).join('|'),
+);
+check(
+  'session import restores line-number preference',
+  await page.locator('.diff-view--inline').evaluate((view) =>
+    view.classList.contains('no-line-nums'),
+  ),
+);
+{
+  const menu = await openViewOptions();
+  check(
+    'session import restores line-wrap preference',
+    (await menu
+      .getByRole('menuitemcheckbox', { name: 'Disable line wrap' })
+      .getAttribute('aria-checked')) === 'false',
+  );
+}
+await openSidebarOptions();
+check(
+  'session import restores context option',
+  (await page.getByLabel('Context lines').inputValue()) === '3',
+  await page.getByLabel('Context lines').inputValue(),
+);
+check(
+  'session import restores ignore-line-endings option',
+  await page.getByLabel('Ignore line-ending style').isChecked(),
+);
+
+// Invalid imports must leave the current comparison intact.
+const invalidChooserPromise = page.waitForEvent('filechooser');
+await page.getByRole('button', { name: 'Open comparison session' }).click();
+const invalidChooser = await invalidChooserPromise;
+await invalidChooser.setFiles({
+  name: 'unsupported.difflens.json',
+  mimeType: 'application/json',
+  buffer: Buffer.from(
+    JSON.stringify({ ...savedSession, version: 999, name: 'Bad Session' }),
+  ),
+});
+await page.waitForTimeout(250);
+check(
+  'invalid session import does not replace current comparison',
+  (await page.locator('.sources-session-name').textContent())?.includes('API Review'),
+);
+check(
+  'invalid session import reports unsupported version',
+  (await page.locator('.toast').textContent())?.includes('unsupported version 999'),
+);
+
 check('no errors accumulated', errors.length === 0, errors.join(' | '));
 
 await browser.close();

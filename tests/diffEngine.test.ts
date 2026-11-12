@@ -14,6 +14,13 @@ import type { DiffOptions } from '../src/lib/types';
 import { applyPatch } from 'diff';
 import { buildVirtualOffsets, findVirtualIndex, getVirtualRange } from '../src/lib/virtualRows';
 import { buildChangeSections } from '../src/lib/changeSections';
+import {
+  SESSION_FORMAT,
+  createComparisonSession,
+  parseComparisonSession,
+  serializeComparisonSession,
+  sessionFileName,
+} from '../src/lib/session';
 
 const base: DiffOptions = {
   ignoreCase: false,
@@ -327,6 +334,50 @@ console.log('--- change sections ---');
     sections[1]?.rowIndex === 5 && sections[1]?.count === 1,
     sections[1],
   );
+}
+
+console.log('--- comparison sessions ---');
+{
+  const session = createComparisonSession({
+    name: ' API Migration Review ',
+    oldText: '',
+    newText: 'changed\n',
+    oldName: 'empty.txt',
+    newName: 'changed.txt',
+    oldReady: true,
+    newReady: true,
+    options: { ...base, context: 3, ignoreLineEndings: true },
+    viewMode: 'inline',
+    wrap: true,
+    lineNumbers: false,
+    syntaxEnabled: false,
+  });
+  const parsed = parseComparisonSession(serializeComparisonSession(session));
+  check('session format is versioned', parsed.format === SESSION_FORMAT && parsed.version === 1);
+  check('session name is normalized', parsed.name === 'API Migration Review', parsed.name);
+  check('session preserves empty ready source', parsed.sources.original.ready && parsed.sources.original.text === '', parsed.sources.original);
+  check('session preserves source filenames', parsed.sources.original.name === 'empty.txt' && parsed.sources.changed.name === 'changed.txt', parsed.sources);
+  check('session restores diff options', parsed.preferences.options.context === 3 && parsed.preferences.options.ignoreLineEndings, parsed.preferences.options);
+  check('session restores view preferences', parsed.preferences.viewMode === 'inline' && parsed.preferences.wrap && !parsed.preferences.lineNumbers && !parsed.preferences.syntaxEnabled, parsed.preferences);
+  check('session filename is safe', sessionFileName(parsed.name) === 'api-migration-review.difflens.json', sessionFileName(parsed.name));
+
+  let badVersion = false;
+  try {
+    parseComparisonSession(JSON.stringify({ ...session, version: 99 }));
+  } catch (error) {
+    badVersion =
+      error instanceof Error && error.message.includes('unsupported version');
+  }
+  check('unsupported session versions are rejected', badVersion);
+
+  let malformed = false;
+  try {
+    parseComparisonSession('{not json');
+  } catch (error) {
+    malformed =
+      error instanceof Error && error.message.includes('not valid JSON');
+  }
+  check('malformed session files are rejected', malformed);
 }
 
 console.log('--- virtual row layout ---');
