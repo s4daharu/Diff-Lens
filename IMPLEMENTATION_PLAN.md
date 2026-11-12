@@ -76,18 +76,18 @@ Acceptance:
 - Ambiguous duplicates do not create incorrect pairings.
 - Unified patch export remains standards-compatible.
 
-### Milestone 3 — Merge / accept change sections
+### Milestone 3 — Merge / accept change sections ✅
 
 Goal: let users resolve a comparison directly instead of manually copying text between editors.
 
-- [ ] Add per-section actions for applying Changed → Original and Original → Changed.
-- [ ] Handle added, deleted, modified, mixed, and moved sections.
-- [ ] Base edits on source-line ranges rather than rendered/virtual row positions.
-- [ ] Recompute the diff immediately after each merge while keeping the nearest section in view.
-- [ ] Add undo/redo for merge operations with keyboard shortcuts and a bounded history.
-- [ ] Make merge controls keyboard-accessible and expose clear ARIA labels describing direction and affected line ranges.
-- [ ] Keep filename/readiness/session state consistent after merges.
-- [ ] Add browser tests for multi-line sections, beginning/end-of-file changes, repeated merges, undo/redo, and virtualized off-screen sections.
+- [x] Add per-section actions for applying Changed → Original and Original → Changed.
+- [x] Handle added, deleted, modified, mixed, and moved sections.
+- [x] Base edits on source-line ranges rather than rendered/virtual row positions.
+- [x] Recompute the diff immediately after each merge while keeping the nearest section in view.
+- [x] Add undo/redo for merge operations with keyboard shortcuts and a bounded history.
+- [x] Make merge controls keyboard-accessible and expose clear ARIA labels describing direction and affected line ranges.
+- [x] Keep filename/readiness/session state consistent after merges.
+- [x] Add browser tests for multi-line sections, beginning/end-of-file changes, repeated merges, undo/redo, and virtualized off-screen sections.
 
 Acceptance:
 - A user can resolve an entire comparison section by section without opening the source editor.

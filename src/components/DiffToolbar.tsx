@@ -34,6 +34,10 @@ interface DiffToolbarProps {
   onCopyMarkdown: () => void;
   onExportHtml: () => void;
   onSaveSession: () => void;
+  canUndoMerge: boolean;
+  canRedoMerge: boolean;
+  onUndoMerge: () => void;
+  onRedoMerge: () => void;
   patchReady: boolean;
   copied: boolean;
   copiedMarkdown: boolean;
@@ -61,6 +65,10 @@ export function DiffToolbar({
   onCopyMarkdown,
   onExportHtml,
   onSaveSession,
+  canUndoMerge,
+  canRedoMerge,
+  onUndoMerge,
+  onRedoMerge,
   patchReady,
   copied,
   copiedMarkdown,
@@ -227,6 +235,33 @@ export function DiffToolbar({
           >
             <SearchIcon size={14} />
             <span className="btn__label">Find</span>
+          </button>
+        </div>
+
+        <div
+          className="diff-toolbar__group merge-history"
+          role="group"
+          aria-label="Merge history"
+        >
+          <button
+            type="button"
+            className="btn btn--small"
+            onClick={onUndoMerge}
+            disabled={!canUndoMerge}
+            title="Undo last merge (Ctrl/⌘+Z)"
+            aria-label="Undo merge"
+          >
+            Undo
+          </button>
+          <button
+            type="button"
+            className="btn btn--small"
+            onClick={onRedoMerge}
+            disabled={!canRedoMerge}
+            title="Redo merge (Ctrl/⌘+Shift+Z or Ctrl/⌘+Y)"
+            aria-label="Redo merge"
+          >
+            Redo
           </button>
         </div>
 

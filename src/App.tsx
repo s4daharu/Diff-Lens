@@ -28,7 +28,14 @@ import {
   buildHtmlDiffReport,
 } from './lib/diffEngine';
 import { sanitizeIgnoreRules } from './lib/ignoreRules';
-import { buildChangeSections } from './lib/changeSections';
+import {
+  buildChangeSections,
+  type ChangeSection,
+} from './lib/changeSections';
+import {
+  mergeChangeSections,
+  type MergeDirection,
+} from './lib/mergeSections';
 import {
   createLineTokenizer,
   detectLang,
@@ -56,6 +63,12 @@ interface WorkerResponse {
 const DEBOUNCE_MS = 250;
 const WORKER_TIMEOUT_MS = 7500;
 const SECTION_LIST_CAP = 400;
+const MERGE_HISTORY_LIMIT = 50;
+
+interface MergeSnapshot {
+  oldText: string;
+  newText: string;
+}
 
 function usePersistedState<T>(
   key: string,
@@ -163,6 +176,8 @@ export default function App() {
     old: oldText !== '',
     new: newText !== '',
   }));
+  const [mergePast, setMergePast] = useState<MergeSnapshot[]>([]);
+  const [mergeFuture, setMergeFuture] = useState<MergeSnapshot[]>([]);
 
   const workerRef = useRef<Worker | null>(null);
   const workerWatchdogRef = useRef<number | undefined>(undefined);
@@ -172,6 +187,8 @@ export default function App() {
   const lastVisibleContextRef = useRef<number | 'all'>(
     options.context === 0 ? 'all' : options.context,
   );
+  const expectedMergeTextRef = useRef<MergeSnapshot | null>(null);
+  const pendingMergeFocusIndexRef = useRef<number | null>(null);
 
   const showToast = useCallback((message: string) => {
     setToast(message);
@@ -391,6 +408,20 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [oldText, newText]);
 
+  useEffect(() => {
+    const expected = expectedMergeTextRef.current;
+    if (
+      expected &&
+      expected.oldText === oldText &&
+      expected.newText === newText
+    ) {
+      expectedMergeTextRef.current = null;
+      return;
+    }
+    setMergePast([]);
+    setMergeFuture([]);
+  }, [oldText, newText]);
+
   const handleNewDiff = useCallback(() => {
     const hadSources = sourceReady.old || sourceReady.new;
     const prevOld = oldText;
@@ -415,6 +446,10 @@ export default function App() {
     setSearchQuery('');
     setSearchOpen(false);
     setEditorOpen(false);
+    setMergePast([]);
+    setMergeFuture([]);
+    expectedMergeTextRef.current = null;
+    pendingMergeFocusIndexRef.current = null;
     save(storageKeys.oldText, '');
     save(storageKeys.newText, '');
     save(storageKeys.options, DEFAULT_OPTIONS);
@@ -460,6 +495,8 @@ export default function App() {
     setSourceReady({ old: true, new: true });
     setSessionName(null);
     setExpandedIndices(new Set());
+    setMergePast([]);
+    setMergeFuture([]);
   }, []);
 
   const handleSelectPreset = useCallback((preset: SamplePreset) => {
@@ -469,6 +506,8 @@ export default function App() {
     setSourceReady({ old: true, new: true });
     setSessionName(null);
     setExpandedIndices(new Set());
+    setMergePast([]);
+    setMergeFuture([]);
   }, []);
 
   const handleSwap = useCallback(() => {
@@ -477,6 +516,8 @@ export default function App() {
     setFileNames((names) => ({ old: names.new, new: names.old }));
     setSourceReady((ready) => ({ old: ready.new, new: ready.old }));
     setExpandedIndices(new Set());
+    setMergePast([]);
+    setMergeFuture([]);
   }, [oldText, newText]);
 
   const handleCopyPatch = useCallback(async () => {
@@ -550,6 +591,10 @@ export default function App() {
         setSearchQuery('');
         setEditorOpen(false);
         setSessionNameDialogOpen(false);
+        setMergePast([]);
+        setMergeFuture([]);
+        expectedMergeTextRef.current = null;
+        pendingMergeFocusIndexRef.current = null;
 
         save(storageKeys.oldText, original.text);
         save(storageKeys.newText, changed.text);
@@ -724,8 +769,8 @@ export default function App() {
   // Group contiguous changed rows into sections so navigation moves by hunk,
   // not line-by-line through a run of related edits.
   const changeSections = useMemo(
-    () => buildChangeSections(visibleRows),
-    [visibleRows],
+    () => buildChangeSections(visibleRows, result?.rows ?? visibleRows),
+    [result, visibleRows],
   );
 
   const listedSections = useMemo(
@@ -837,6 +882,116 @@ export default function App() {
     [changeSections, handleSelectChange, ordinalBySectionStart],
   );
 
+  const currentSection: ChangeSection | null =
+    currentChangeIndex == null ? null : changeSections[currentChangeIndex] ?? null;
+
+  const applyMergeSnapshot = useCallback(
+    (snapshot: MergeSnapshot, focusIndex: number) => {
+      expectedMergeTextRef.current = snapshot;
+      pendingMergeFocusIndexRef.current = focusIndex;
+      setResult(null);
+      setPatch(null);
+      setComputing(true);
+      setOldText(snapshot.oldText);
+      setNewText(snapshot.newText);
+      save(storageKeys.oldText, snapshot.oldText);
+      save(storageKeys.newText, snapshot.newText);
+    },
+    [],
+  );
+
+  const handleMergeSection = useCallback(
+    (rowIndex: number, direction: MergeDirection) => {
+      const sectionIndex = ordinalBySectionStart.get(rowIndex);
+      if (sectionIndex == null) return;
+      const section = changeSections[sectionIndex];
+      if (!section) return;
+
+      const sectionsToMerge =
+        section.moveId == null
+          ? [section]
+          : changeSections.filter(
+              (candidate) => candidate.moveId === section.moveId,
+            );
+      const merged = mergeChangeSections(
+        oldText,
+        newText,
+        sectionsToMerge,
+        direction,
+      );
+      if (merged.oldText === oldText && merged.newText === newText) return;
+
+      const snapshot = { oldText, newText };
+      setMergePast((past) => [
+        ...past.slice(-(MERGE_HISTORY_LIMIT - 1)),
+        snapshot,
+      ]);
+      setMergeFuture([]);
+      applyMergeSnapshot(merged, sectionIndex);
+      showToast(
+        direction === 'changed-to-original'
+          ? 'Applied Changed to Original'
+          : 'Applied Original to Changed',
+      );
+    },
+    [
+      applyMergeSnapshot,
+      changeSections,
+      newText,
+      oldText,
+      ordinalBySectionStart,
+      showToast,
+    ],
+  );
+
+  const handleUndoMerge = useCallback(() => {
+    const snapshot = mergePast[mergePast.length - 1];
+    if (!snapshot) return;
+    const current = { oldText, newText };
+    setMergePast((past) => past.slice(0, -1));
+    setMergeFuture((future) => [
+      ...future.slice(-(MERGE_HISTORY_LIMIT - 1)),
+      current,
+    ]);
+    applyMergeSnapshot(snapshot, currentChangeIndex ?? 0);
+    showToast('Merge undone');
+  }, [
+    applyMergeSnapshot,
+    currentChangeIndex,
+    mergePast,
+    newText,
+    oldText,
+    showToast,
+  ]);
+
+  const handleRedoMerge = useCallback(() => {
+    const snapshot = mergeFuture[mergeFuture.length - 1];
+    if (!snapshot) return;
+    const current = { oldText, newText };
+    setMergeFuture((future) => future.slice(0, -1));
+    setMergePast((past) => [
+      ...past.slice(-(MERGE_HISTORY_LIMIT - 1)),
+      current,
+    ]);
+    applyMergeSnapshot(snapshot, currentChangeIndex ?? 0);
+    showToast('Merge redone');
+  }, [
+    applyMergeSnapshot,
+    currentChangeIndex,
+    mergeFuture,
+    newText,
+    oldText,
+    showToast,
+  ]);
+
+  useEffect(() => {
+    const requested = pendingMergeFocusIndexRef.current;
+    if (requested == null || result == null || computing) return;
+    pendingMergeFocusIndexRef.current = null;
+    if (changeSections.length === 0) return;
+    activateSection(Math.min(requested, changeSections.length - 1));
+  }, [activateSection, changeSections.length, computing, result]);
+
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       // Ignore if user is currently typing in an input or textarea
@@ -881,6 +1036,18 @@ export default function App() {
       if (!(e.ctrlKey || e.metaKey)) return;
       const key = e.key.toLowerCase();
 
+      if (!inInput && key === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) handleRedoMerge();
+        else handleUndoMerge();
+        return;
+      }
+      if (!inInput && key === 'y') {
+        e.preventDefault();
+        handleRedoMerge();
+        return;
+      }
+
       if (key === '1') {
         e.preventDefault();
         setViewMode('side-by-side');
@@ -923,6 +1090,8 @@ export default function App() {
     handleNextChange,
     handlePrevChange,
     handleEditSources,
+    handleUndoMerge,
+    handleRedoMerge,
     comparisonReady,
     sourceReady,
     result,
@@ -1045,6 +1214,8 @@ export default function App() {
               onNextMovedSection={handleNextMovedSection}
               onPrevMovedSection={handlePrevMovedSection}
               onJumpToMovePair={handleJumpToMovePair}
+              currentSection={currentSection}
+              onMergeSection={handleMergeSection}
               sections={listedSections}
               hiddenSections={changeSections.length - listedSections.length}
               activeSectionStartRow={activeChangeRowIndex}
@@ -1080,6 +1251,10 @@ export default function App() {
                 onCopyMarkdown={handleCopyMarkdown}
                 onExportHtml={handleExportHtml}
                 onSaveSession={() => setSessionNameDialogOpen(true)}
+                canUndoMerge={mergePast.length > 0}
+                canRedoMerge={mergeFuture.length > 0}
+                onUndoMerge={handleUndoMerge}
+                onRedoMerge={handleRedoMerge}
                 patchReady={patch !== null}
                 copied={copied}
                 copiedMarkdown={copiedMarkdown}

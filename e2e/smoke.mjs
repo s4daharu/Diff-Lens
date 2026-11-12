@@ -341,6 +341,22 @@ check(
   'off-screen change navigation mounts the target row',
   (await page.locator('.diff-row--modified.diff-row--active').count()) === 1,
 );
+await page
+  .locator('.change-item-row')
+  .first()
+  .getByRole('button', { name: /Apply Changed .* to Original/ })
+  .click();
+await page.waitForSelector('.sidebar-identical-msg', { timeout: 5000 });
+check(
+  'virtualized off-screen section can merge by source range',
+  (await page.locator('.sidebar-identical-msg').count()) === 1,
+);
+await page.getByRole('button', { name: 'Undo merge' }).click();
+await page.waitForSelector('.diff-row--modified', { timeout: 5000 });
+check(
+  'toolbar undo restores virtualized merge',
+  (await page.locator('.diff-row--modified').count()) >= 1,
+);
 
 // wrap toggle: long line must wrap instead of horizontally scrolling
 const longLine = 'y'.repeat(2000);
@@ -532,6 +548,71 @@ check('search matches highlighted', matchesCount > 0, `matches=${matchesCount}`)
 await page.locator('.diff-search-clear').click();
 await page.getByRole('button', { name: 'Close', exact: true }).click();
 
+// section merge actions, repeated recomputation, and undo/redo
+await page.getByRole('button', { name: 'New diff' }).click();
+await page.waitForSelector('.main--landing');
+const mergeOriginal =
+  'old first\nkeep\nold one\nold two\nanchor\nold last';
+const mergeChanged =
+  'new first\nkeep\nnew one\nnew two\nanchor\nnew last';
+await page.locator('.input-panel--left textarea').fill(mergeOriginal);
+await page.locator('.input-panel--right textarea').fill(mergeChanged);
+await page.waitForSelector('.change-item', { timeout: 5000 });
+await ensureSidebarOpen();
+
+await page
+  .locator('.change-item-row')
+  .first()
+  .getByRole('button', { name: /Apply Original .* to Changed/ })
+  .click();
+await page.waitForTimeout(650);
+check(
+  'Original to Changed resolves a beginning section',
+  (await page.locator('.change-item-row').count()) === 2,
+);
+
+await page
+  .locator('.change-item-row')
+  .first()
+  .getByRole('button', { name: /Apply Changed .* to Original/ })
+  .click();
+await page.waitForTimeout(650);
+check(
+  'multi-line merge recomputes remaining sections',
+  (await page.locator('.change-item-row').count()) === 1,
+);
+
+await page
+  .locator('.change-item-row')
+  .first()
+  .getByRole('button', { name: /Apply Changed .* to Original/ })
+  .click();
+await page.waitForSelector('.sidebar-identical-msg', { timeout: 5000 });
+check('repeated section merges can resolve the comparison', true);
+check(
+  'redo is empty before undo',
+  await page.getByRole('button', { name: 'Redo merge' }).isDisabled(),
+);
+
+for (let i = 0; i < 3; i++) {
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(650);
+}
+await editSources();
+check(
+  'three undo operations restore exact source contents',
+  (await ta.inputValue()) === mergeOriginal &&
+    (await ta2.inputValue()) === mergeChanged,
+);
+await closeEditor();
+
+for (let i = 0; i < 3; i++) {
+  await page.keyboard.press('Control+Shift+z');
+  await page.waitForTimeout(650);
+}
+await page.waitForSelector('.sidebar-identical-msg', { timeout: 5000 });
+check('three redo operations resolve the comparison again', true);
+
 // moved-block detection and navigation
 await page.getByRole('button', { name: 'New diff' }).click();
 await page.waitForSelector('.main--landing');
@@ -597,6 +678,20 @@ check(
   'next moved navigation keeps a moved section active',
   (await page.locator('.change-item--active[data-move-role]').count()) === 1,
 );
+await page
+  .locator('.change-item-row')
+  .filter({ has: page.locator('.change-item[data-move-role]') })
+  .first()
+  .getByRole('button', { name: /Apply Changed .* to Original/ })
+  .click();
+await page.waitForSelector('.sidebar-identical-msg', { timeout: 5000 });
+check('moved pair merges atomically in one action', true);
+await page.keyboard.press('Control+z');
+await page.waitForSelector('.diff-row--moved-from', { timeout: 5000 });
+check('undo restores the moved pair', true);
+await page.keyboard.press('Control+Shift+z');
+await page.waitForSelector('.sidebar-identical-msg', { timeout: 5000 });
+check('redo reapplies the moved pair', true);
 
 // custom ignore rules + Smart precision
 await editSources();

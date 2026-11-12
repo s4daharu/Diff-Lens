@@ -16,6 +16,7 @@ with all diff computation happening in a Web Worker.
   into an "Edit sources" drawer
 - Change-section outline — navigate contiguous edit hunks instead of stepping line by line
 - Bounded moved-block detection with paired-location navigation and ambiguity-safe matching
+- Per-section Changed ↔ Original merge actions with source-range-safe edits and bounded undo/redo history
 - Difference minimap gutter with pointer and keyboard navigation
 - Paste text, open files (up to 10 MB), or drag & drop
 - Ignore case / whitespace / line endings (CRLF) plus ordered literal/regex custom ignore rules
@@ -34,6 +35,8 @@ with all diff computation happening in a Web Worker.
 | `Ctrl/⌘ + S` | Download `.patch` |
 | `Ctrl/⌘ + F` | Find within diff |
 | `Ctrl/⌘ + E` | Open the source editor |
+| `Ctrl/⌘ + Z` | Undo last section merge |
+| `Ctrl/⌘ + Shift + Z` / `Ctrl/⌘ + Y` | Redo section merge |
 | `Alt + N` / `Alt + P` | Next / previous change section |
 | `←` / `→` | Switch view from the view-mode tabs |
 
