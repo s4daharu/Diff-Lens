@@ -449,7 +449,11 @@ export function DiffSidebar({
               onOptionsChange({
                 ...options,
                 granularity:
-                  value === 'words' ? ('words' as const) : ('chars' as const),
+                  value === 'smart'
+                    ? ('smart' as const)
+                    : value === 'words'
+                      ? ('words' as const)
+                      : ('chars' as const),
               })
             }
             options={[
