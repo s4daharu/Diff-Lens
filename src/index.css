@@ -880,11 +880,14 @@ body {
 
 .main--workspace .results {
   flex: 1;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .main--workspace .diff-view {
-  flex: 1;
-  min-height: 220px;
+  flex: 1 1 0;
+  min-height: 0;
 }
 
 /* Sidebar */
@@ -1832,6 +1835,16 @@ kbd {
 
   .results {
     order: -1;
+  }
+
+  .main--workspace .results {
+    height: auto;
+    overflow: visible;
+  }
+
+  .main--workspace .diff-view {
+    flex: none;
+    min-height: 220px;
   }
 
   .diff-sidebar {
