@@ -70,7 +70,7 @@ export function SessionNameModal({
             type="button"
             className="btn btn--small btn--icon btn--ghost"
             onClick={onClose}
-            aria-label="Close save session dialog"
+            aria-label="Close session dialog"
           >
             <CloseIcon size={16} />
           </button>

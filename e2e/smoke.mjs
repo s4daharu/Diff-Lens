@@ -583,7 +583,7 @@ await page.getByRole('button', { name: 'Export options' }).click();
 await page.getByRole('menuitem', { name: 'Save comparison session' }).click();
 const sessionDialog = page.getByRole('dialog', { name: 'Save comparison session' });
 await sessionDialog.getByLabel('Session name').fill('API Review');
-await sessionDialog.getByRole('button', { name: 'Save session' }).click();
+await sessionDialog.getByRole('button', { name: 'Save session', exact: true }).click();
 const sessionDownload = await sessionDownloadPromise;
 check(
   'session export uses named .difflens.json file',
