@@ -168,6 +168,15 @@ await page.emulateMedia({ media: 'screen' });
 await page.evaluate(() => window.dispatchEvent(new Event('afterprint')));
 await page.waitForTimeout(100);
 check('print report unmounts after printing', (await page.locator('.print-report').count()) === 0);
+
+await page.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
+await page.waitForSelector('.print-report[data-print-layout="side-by-side"]');
+check(
+  'native browser print builds report for the current view',
+  (await page.locator('.print-report').count()) === 1,
+);
+await page.evaluate(() => window.dispatchEvent(new Event('afterprint')));
+await page.waitForTimeout(100);
 await ensureSidebarOpen();
 check('sidebar opens on demand', await page.locator('.diff-sidebar').isVisible());
 await page.getByRole('button', { name: 'Close details panel' }).click();

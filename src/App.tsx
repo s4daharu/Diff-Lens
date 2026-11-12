@@ -696,25 +696,6 @@ export default function App() {
     [result],
   );
 
-  useEffect(() => {
-    const onBeforePrint = () => {
-      if (!comparisonReady || !result || result.aborted || printReport) return;
-      flushSync(() => {
-        setPrintReport({
-          viewMode,
-          generatedAt: new Date().toISOString(),
-        });
-      });
-    };
-    const onAfterPrint = () => setPrintReport(null);
-    window.addEventListener('beforeprint', onBeforePrint);
-    window.addEventListener('afterprint', onAfterPrint);
-    return () => {
-      window.removeEventListener('beforeprint', onBeforePrint);
-      window.removeEventListener('afterprint', onAfterPrint);
-    };
-  }, [comparisonReady, printReport, result, viewMode]);
-
   const handleExportHtml = useCallback(() => {
     if (!result || result.rows.length === 0) return;
     const html = buildHtmlDiffReport({
@@ -791,6 +772,25 @@ export default function App() {
 
   const comparisonReady = sourceReady.old && sourceReady.new;
   const hasAnySource = sourceReady.old || sourceReady.new;
+
+  useEffect(() => {
+    const onBeforePrint = () => {
+      if (!comparisonReady || !result || result.aborted || printReport) return;
+      flushSync(() => {
+        setPrintReport({
+          viewMode,
+          generatedAt: new Date().toISOString(),
+        });
+      });
+    };
+    const onAfterPrint = () => setPrintReport(null);
+    window.addEventListener('beforeprint', onBeforePrint);
+    window.addEventListener('afterprint', onAfterPrint);
+    return () => {
+      window.removeEventListener('beforeprint', onBeforePrint);
+      window.removeEventListener('afterprint', onAfterPrint);
+    };
+  }, [comparisonReady, printReport, result, viewMode]);
 
   const identical =
     result?.stats != null &&

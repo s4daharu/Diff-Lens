@@ -2309,14 +2309,15 @@ kbd {
 
 /* ---------- Printable comparison report ---------- */
 
+@page {
+  margin: 12mm;
+}
+
 .print-report {
   display: none;
 }
 
 @media print {
-  @page {
-    margin: 12mm;
-  }
 
   .app--print-report > :not(.print-report) {
     display: none !important;
