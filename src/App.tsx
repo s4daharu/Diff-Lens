@@ -151,6 +151,9 @@ export default function App() {
   const seqRef = useRef(0);
   const toastTimerRef = useRef<number | undefined>(undefined);
   const themeOverridden = useRef(loadString(storageKeys.theme, '') !== '');
+  const lastVisibleContextRef = useRef<number | 'all'>(
+    options.context === 0 ? 'all' : options.context,
+  );
 
   const showToast = useCallback((message: string) => {
     setToast(message);
@@ -220,6 +223,12 @@ export default function App() {
       workerRef.current = null;
     };
   }, [ensureWorker]);
+
+  useEffect(() => {
+    if (options.context !== 0) {
+      lastVisibleContextRef.current = options.context;
+    }
+  }, [options.context]);
 
   const syntaxLang = useMemo(
     () => detectLang(fileNames.old, fileNames.new, oldText || newText),
@@ -340,6 +349,7 @@ export default function App() {
     setOldText('');
     setNewText('');
     setOptions(DEFAULT_OPTIONS);
+    lastVisibleContextRef.current = DEFAULT_OPTIONS.context;
     setFileNames({ old: null, new: null });
     setRenderAll(false);
     setExpandedIndices(new Set());
@@ -484,6 +494,35 @@ export default function App() {
   const handleCloseEditor = useCallback(() => {
     setEditorOpen(false);
   }, []);
+
+  const handleHideWhitespaceChanges = useCallback(
+    (hidden: boolean) => {
+      if (options.ignoreWhitespace === hidden) return;
+      setOptions({ ...options, ignoreWhitespace: hidden });
+    },
+    [options, setOptions],
+  );
+
+  const handleHideUnchangedLines = useCallback(
+    (hidden: boolean) => {
+      const currentlyHidden = options.context === 0;
+      if (currentlyHidden === hidden) return;
+
+      if (hidden) {
+        lastVisibleContextRef.current =
+          options.context === 0 ? 'all' : options.context;
+        setOptions({ ...options, context: 0 });
+        return;
+      }
+
+      const restoredContext =
+        lastVisibleContextRef.current === 0
+          ? 'all'
+          : lastVisibleContextRef.current;
+      setOptions({ ...options, context: restoredContext });
+    },
+    [options, setOptions],
+  );
 
   const hasInput = oldText !== '' || newText !== '';
 
@@ -774,6 +813,10 @@ export default function App() {
                 onViewModeChange={setViewMode}
                 wrap={wrap}
                 onWrapChange={setWrap}
+                hideWhitespaceChanges={options.ignoreWhitespace}
+                onHideWhitespaceChangesChange={handleHideWhitespaceChanges}
+                hideUnchangedLines={options.context === 0}
+                onHideUnchangedLinesChange={handleHideUnchangedLines}
                 lineNumbers={lineNumbers}
                 onLineNumbersChange={setLineNumbers}
                 searchOpen={searchOpen}

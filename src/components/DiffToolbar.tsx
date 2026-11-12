@@ -4,10 +4,11 @@ import {
   CloseIcon,
   CopyIcon,
   DownloadIcon,
+  CheckIcon,
   FileCodeIcon,
   HashIcon,
   SearchIcon,
-  WrapTextIcon,
+  SlidersIcon,
 } from './Icons';
 
 interface DiffToolbarProps {
@@ -15,6 +16,10 @@ interface DiffToolbarProps {
   onViewModeChange: (mode: ViewMode) => void;
   wrap: boolean;
   onWrapChange: (wrap: boolean) => void;
+  hideWhitespaceChanges: boolean;
+  onHideWhitespaceChangesChange: (hidden: boolean) => void;
+  hideUnchangedLines: boolean;
+  onHideUnchangedLinesChange: (hidden: boolean) => void;
   lineNumbers: boolean;
   onLineNumbersChange: (show: boolean) => void;
   searchOpen: boolean;
@@ -35,6 +40,10 @@ export function DiffToolbar({
   onViewModeChange,
   wrap,
   onWrapChange,
+  hideWhitespaceChanges,
+  onHideWhitespaceChangesChange,
+  hideUnchangedLines,
+  onHideUnchangedLinesChange,
   lineNumbers,
   onLineNumbersChange,
   searchOpen,
@@ -49,21 +58,20 @@ export function DiffToolbar({
   copied,
   copiedMarkdown,
 }: DiffToolbarProps) {
-  const [exportOpen, setExportOpen] = useState(false);
+  const [openMenu, setOpenMenu] = useState<'view' | 'export' | null>(null);
+  const viewMenuRef = useRef<HTMLDivElement>(null);
   const exportMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!exportOpen) return;
+    if (!openMenu) return;
     const onClick = (e: MouseEvent) => {
-      if (
-        exportMenuRef.current &&
-        !exportMenuRef.current.contains(e.target as Node)
-      ) {
-        setExportOpen(false);
+      const activeRef = openMenu === 'view' ? viewMenuRef : exportMenuRef;
+      if (activeRef.current && !activeRef.current.contains(e.target as Node)) {
+        setOpenMenu(null);
       }
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setExportOpen(false);
+      if (e.key === 'Escape') setOpenMenu(null);
     };
     document.addEventListener('mousedown', onClick);
     document.addEventListener('keydown', onKey);
@@ -71,7 +79,7 @@ export function DiffToolbar({
       document.removeEventListener('mousedown', onClick);
       document.removeEventListener('keydown', onKey);
     };
-  }, [exportOpen]);
+  }, [openMenu]);
 
   return (
     <>
@@ -108,18 +116,76 @@ export function DiffToolbar({
           </button>
         </div>
 
-        <div className="diff-toolbar__group">
+        <div className="dropdown-wrapper" ref={viewMenuRef}>
           <button
             type="button"
-            className="btn btn--small btn--toggle"
-            aria-pressed={wrap}
-            onClick={() => onWrapChange(!wrap)}
-            title="Wrap long lines instead of scrolling horizontally"
-            aria-label="Wrap lines"
+            className="btn btn--small"
+            onClick={() =>
+              setOpenMenu((menu) => (menu === 'view' ? null : 'view'))
+            }
+            title="Control how differences are displayed"
+            aria-label="View options"
+            aria-expanded={openMenu === 'view'}
+            aria-haspopup="menu"
           >
-            <WrapTextIcon size={14} />
-            <span className="btn__label">Wrap</span>
+            <SlidersIcon size={14} />
+            <span className="btn__label">View</span>
           </button>
+
+          {openMenu === 'view' && (
+            <div
+              className="dropdown-menu dropdown-menu--view"
+              role="menu"
+              aria-label="View options"
+            >
+              <button
+                type="button"
+                className="dropdown-item dropdown-item--checkable"
+                role="menuitemcheckbox"
+                aria-checked={hideWhitespaceChanges}
+                onClick={() =>
+                  onHideWhitespaceChangesChange(!hideWhitespaceChanges)
+                }
+                title="Ignore whitespace-only differences when comparing lines"
+              >
+                <span className="dropdown-item__check" aria-hidden="true">
+                  {hideWhitespaceChanges && <CheckIcon size={13} />}
+                </span>
+                <span>Hide whitespace changes</span>
+              </button>
+              <button
+                type="button"
+                className="dropdown-item dropdown-item--checkable"
+                role="menuitemcheckbox"
+                aria-checked={hideUnchangedLines}
+                onClick={() =>
+                  onHideUnchangedLinesChange(!hideUnchangedLines)
+                }
+                title="Show only changed lines, with expandable hidden regions"
+              >
+                <span className="dropdown-item__check" aria-hidden="true">
+                  {hideUnchangedLines && <CheckIcon size={13} />}
+                </span>
+                <span>Hide unchanged lines</span>
+              </button>
+              <button
+                type="button"
+                className="dropdown-item dropdown-item--checkable"
+                role="menuitemcheckbox"
+                aria-checked={!wrap}
+                onClick={() => onWrapChange(!wrap)}
+                title="Keep long lines on one row and scroll horizontally"
+              >
+                <span className="dropdown-item__check" aria-hidden="true">
+                  {!wrap && <CheckIcon size={13} />}
+                </span>
+                <span>Disable line wrap</span>
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="diff-toolbar__group">
           <button
             type="button"
             className="btn btn--small btn--toggle"
@@ -149,24 +215,29 @@ export function DiffToolbar({
           <button
             type="button"
             className="btn btn--small"
-            onClick={() => setExportOpen((o) => !o)}
+            onClick={() => setOpenMenu((menu) => (menu === 'export' ? null : 'export'))}
             title="Export the diff (patch, Markdown, HTML report)"
             aria-label="Export options"
-            aria-expanded={exportOpen}
+            aria-expanded={openMenu === 'export'}
             aria-haspopup="menu"
           >
             <FileCodeIcon size={14} />
             <span className="btn__label">Export</span>
           </button>
 
-          {exportOpen && (
-            <div className="dropdown-menu dropdown-menu--right">
+          {openMenu === 'export' && (
+            <div
+              className="dropdown-menu dropdown-menu--right"
+              role="menu"
+              aria-label="Export options"
+            >
               <button
                 type="button"
                 className="dropdown-item"
+                role="menuitem"
                 onClick={() => {
                   onCopyPatch();
-                  setExportOpen(false);
+                  setOpenMenu(null);
                 }}
                 disabled={!patchReady}
               >
@@ -176,9 +247,10 @@ export function DiffToolbar({
               <button
                 type="button"
                 className="dropdown-item"
+                role="menuitem"
                 onClick={() => {
                   onDownloadPatch();
-                  setExportOpen(false);
+                  setOpenMenu(null);
                 }}
                 disabled={!patchReady}
               >
@@ -188,9 +260,10 @@ export function DiffToolbar({
               <button
                 type="button"
                 className="dropdown-item"
+                role="menuitem"
                 onClick={() => {
                   onCopyMarkdown();
-                  setExportOpen(false);
+                  setOpenMenu(null);
                 }}
               >
                 <CopyIcon size={14} />
@@ -199,9 +272,10 @@ export function DiffToolbar({
               <button
                 type="button"
                 className="dropdown-item"
+                role="menuitem"
                 onClick={() => {
                   onExportHtml();
-                  setExportOpen(false);
+                  setOpenMenu(null);
                 }}
               >
                 <DownloadIcon size={14} />

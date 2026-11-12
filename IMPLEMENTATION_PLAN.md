@@ -8,9 +8,10 @@ DiffLens is a client-side text comparison app; all user text stays in the browse
 - [x] Unit tests and Playwright browser smoke tests.
 - [x] Handle CR-only and mixed line endings consistently, and make leading/trailing hidden context expandable.
 - [x] Run lint, diff-engine regression tests, production build and Chromium smoke tests in GitHub Actions on pushes and pull requests.
+- [x] Add a consolidated View menu for hiding whitespace changes, hiding unchanged lines while preserving the prior context preference, and controlling line wrap.
+- [x] Add browser coverage for file upload, drag-and-drop, and keyboard navigation.
 
 ## Next milestones
-- [ ] Add browser tests for file upload, drag-and-drop, and keyboard-only navigation.
 - [ ] Assess large-input performance and virtualize long diff views instead of truncating them.
 - [ ] Strengthen accessible descriptions and focus behavior for diff rows, minimap, and editor drawer.
 - [ ] Add optional import/export of named comparison sessions without sending data to a server.

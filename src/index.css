@@ -292,6 +292,33 @@ body {
   color: var(--accent);
 }
 
+.dropdown-menu--view {
+  min-width: 224px;
+}
+
+.dropdown-item--checkable {
+  gap: 6px;
+  padding-left: 8px;
+}
+
+.dropdown-item__check {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 18px;
+  color: var(--accent);
+}
+
+.dropdown-item[aria-checked='true'] {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+
+.dropdown-item[aria-checked='true']:hover {
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-inset));
+}
+
 .dropdown-item--stack {
   flex-direction: column;
   align-items: flex-start;

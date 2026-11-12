@@ -51,6 +51,14 @@ const openSidebarOptions = async () => {
   }
 };
 
+const openViewOptions = async () => {
+  const button = page.getByRole('button', { name: 'View options' });
+  if ((await button.getAttribute('aria-expanded')) !== 'true') {
+    await button.click();
+  }
+  return page.getByRole('menu', { name: 'View options' });
+};
+
 check('no console/page errors on load', errors.length === 0, errors.join(' | '));
 
 const emptyVisible = await page.locator('.empty').isVisible();
@@ -67,6 +75,30 @@ await page.waitForSelector('.diff-view--side', { timeout: 5000 });
 check('sources bar visible', await page.locator('.sources-bar').isVisible());
 check('sidebar visible', await page.locator('.diff-sidebar').isVisible());
 check('toolbar visible', await page.locator('.diff-toolbar').isVisible());
+
+const viewMenu = await openViewOptions();
+check(
+  'view menu exposes requested controls',
+  (await viewMenu.getByRole('menuitemcheckbox').count()) === 3,
+);
+check(
+  'line wrap is disabled by default',
+  (await viewMenu
+    .getByRole('menuitemcheckbox', { name: 'Disable line wrap' })
+    .getAttribute('aria-checked')) === 'true',
+);
+await viewMenu
+  .getByRole('menuitemcheckbox', { name: 'Hide whitespace changes' })
+  .click();
+check(
+  'whitespace changes can be hidden',
+  (await viewMenu
+    .getByRole('menuitemcheckbox', { name: 'Hide whitespace changes' })
+    .getAttribute('aria-checked')) === 'true',
+);
+await viewMenu
+  .getByRole('menuitemcheckbox', { name: 'Hide whitespace changes' })
+  .click();
 
 const rows = await page
   .locator('.diff-row--modified, .diff-row--added, .diff-row--deleted')
@@ -93,15 +125,21 @@ await page.waitForSelector('.diff-view--inline');
 const signCount = await page.locator('.sign--added, .sign--deleted').count();
 check('inline view shows signs', signCount > 0, `signs=${signCount}`);
 
-// context=0
-await openSidebarOptions();
-await page.getByLabel('Context lines').selectOption('0');
+// hide unchanged lines from the View menu, then restore the previous context
+const contextMenu = await openViewOptions();
+await contextMenu
+  .getByRole('menuitemcheckbox', { name: 'Hide unchanged lines' })
+  .click();
 await page.waitForTimeout(600);
 const gapCount = await page.locator('.diff-row--gap').count();
-check('context 0 produces gaps', gapCount >= 2, `gaps=${gapCount}`);
+check('hide unchanged lines produces gaps', gapCount >= 2, `gaps=${gapCount}`);
+await contextMenu
+  .getByRole('menuitemcheckbox', { name: 'Hide unchanged lines' })
+  .click();
+await page.waitForTimeout(600);
 
 // ignore case option
-await page.getByLabel('Context lines').selectOption('all');
+await openSidebarOptions();
 
 // open the source editor drawer to edit texts
 const editSources = () => page.getByRole('button', { name: 'Edit sources' }).click();
@@ -213,14 +251,24 @@ const overflowBefore = await page.evaluate(() => {
   return s.scrollWidth - s.clientWidth;
 });
 check('no wrap: horizontal overflow present', overflowBefore > 200, `overflow=${overflowBefore}px`);
-await page.getByLabel('Wrap lines').click();
+{
+  const menu = await openViewOptions();
+  await menu
+    .getByRole('menuitemcheckbox', { name: 'Disable line wrap' })
+    .click();
+}
 await page.waitForTimeout(900);
 const overflowAfter = await page.evaluate(() => {
   const s = document.querySelector('.diff-scroll');
   return s.scrollWidth - s.clientWidth;
 });
 check('wrap on: no horizontal overflow', overflowAfter < 100, `overflow=${overflowAfter}px`);
-await page.getByLabel('Wrap lines').click();
+{
+  const menu = await openViewOptions();
+  await menu
+    .getByRole('menuitemcheckbox', { name: 'Disable line wrap' })
+    .click();
+}
 
 // new diff: clears panels but keeps theme preference
 const themeBeforeNew = await page.evaluate(() => document.documentElement.dataset.theme);

@@ -263,14 +263,14 @@ export function DiffSidebar({
             }
           />
           <Checkbox
-            label="Ignore whitespace"
+            label="Hide whitespace changes"
             checked={options.ignoreWhitespace}
             onChange={(ignoreWhitespace) =>
               onOptionsChange({ ...options, ignoreWhitespace })
             }
           />
           <Checkbox
-            label="Ignore line endings (CRLF)"
+            label="Ignore line-ending style"
             checked={options.ignoreLineEndings}
             onChange={(ignoreLineEndings) =>
               onOptionsChange({ ...options, ignoreLineEndings })
@@ -286,11 +286,11 @@ export function DiffSidebar({
               })
             }
             options={[
-              { value: 'all', label: 'Context: all' },
-              { value: '0', label: 'Context: 0' },
-              { value: '3', label: 'Context: 3' },
-              { value: '5', label: 'Context: 5' },
-              { value: '10', label: 'Context: 10' },
+              { value: 'all', label: 'Show all unchanged lines' },
+              { value: '0', label: 'Hide unchanged lines' },
+              { value: '3', label: 'Show 3 context lines' },
+              { value: '5', label: 'Show 5 context lines' },
+              { value: '10', label: 'Show 10 context lines' },
             ]}
           />
           <Select
