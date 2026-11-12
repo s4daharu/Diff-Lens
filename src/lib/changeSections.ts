@@ -1,4 +1,4 @@
-import type { DiffRow, RowKind } from './types';
+import type { DiffRow, MoveRole, RowKind } from './types';
 
 export type ChangeSectionKind = Exclude<RowKind, 'equal' | 'gap'> | 'mixed';
 
@@ -11,6 +11,11 @@ export interface ChangeSection {
   newNum: number | null;
   newEndNum: number | null;
   count: number;
+  moveId?: number;
+  moveRole?: MoveRole;
+  moveSimilarity?: number;
+  moveExact?: boolean;
+  movePeerRowIndex?: number;
 }
 
 export function buildChangeSections(rows: DiffRow[]): ChangeSection[] {
@@ -28,6 +33,13 @@ export function buildChangeSections(rows: DiffRow[]): ChangeSection[] {
       return;
     }
 
+    if (
+      current &&
+      (current.moveId !== row.moveId || current.moveRole !== row.moveRole)
+    ) {
+      finish();
+    }
+
     if (!current) {
       current = {
         rowIndex,
@@ -38,6 +50,10 @@ export function buildChangeSections(rows: DiffRow[]): ChangeSection[] {
         newNum: row.newNum,
         newEndNum: row.newNum,
         count: 1,
+        moveId: row.moveId,
+        moveRole: row.moveRole,
+        moveSimilarity: row.moveSimilarity,
+        moveExact: row.moveExact,
       };
       return;
     }
@@ -52,5 +68,20 @@ export function buildChangeSections(rows: DiffRow[]): ChangeSection[] {
   });
 
   finish();
+
+  const movedById = new Map<number, ChangeSection[]>();
+  for (const section of sections) {
+    if (section.moveId == null) continue;
+    const list = movedById.get(section.moveId) ?? [];
+    list.push(section);
+    movedById.set(section.moveId, list);
+  }
+  for (const section of sections) {
+    if (section.moveId == null || section.moveRole == null) continue;
+    const peers = movedById.get(section.moveId);
+    const peer = peers?.find((candidate) => candidate.moveRole !== section.moveRole);
+    if (peer) section.movePeerRowIndex = peer.rowIndex;
+  }
+
   return sections;
 }

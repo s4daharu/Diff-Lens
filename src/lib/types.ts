@@ -2,6 +2,7 @@ export type Granularity = 'chars' | 'words' | 'smart';
 export type ViewMode = 'side-by-side' | 'inline';
 export type ContextSetting = number | 'all';
 export type IgnoreRuleKind = 'literal' | 'regex';
+export type MoveRole = 'from' | 'to';
 
 export interface IgnoreRule {
   kind: IgnoreRuleKind;
@@ -37,6 +38,10 @@ export interface DiffRow {
   skipped?: number;
   gapStartRow?: number;
   gapEndRow?: number;
+  moveId?: number;
+  moveRole?: MoveRole;
+  moveSimilarity?: number;
+  moveExact?: boolean;
 }
 
 export interface DiffStats {

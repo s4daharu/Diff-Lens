@@ -17,6 +17,10 @@ import { applyPatch } from 'diff';
 import { buildVirtualOffsets, findVirtualIndex, getVirtualRange } from '../src/lib/virtualRows';
 import { buildChangeSections } from '../src/lib/changeSections';
 import {
+  MAX_MOVE_COMPARISONS,
+  detectMovedBlocks,
+} from '../src/lib/movedBlocks';
+import {
   SESSION_FORMAT,
   createComparisonSession,
   parseComparisonSession,
@@ -485,6 +489,99 @@ console.log('--- change sections ---');
     'second section starts after unchanged lines',
     sections[1]?.rowIndex === 5 && sections[1]?.count === 1,
     sections[1],
+  );
+}
+
+console.log('--- moved-block detection ---');
+{
+  const exactOld = 'start\nalpha moved line\nbeta moved line\nend\n';
+  const exactNew = 'start\nend\nalpha moved line\nbeta moved line\n';
+  const exactDiff = computeDiff(exactOld, exactNew, base);
+  const exact = detectMovedBlocks(exactDiff.rows);
+  check('exact move produces one pair', exact.pairs.length === 1, exact.pairs);
+  check(
+    'exact move annotates from and to rows',
+    exact.rows.some((row) => row.moveRole === 'from') &&
+      exact.rows.some((row) => row.moveRole === 'to') &&
+      exact.pairs[0]?.exact === true,
+    exact.rows,
+  );
+  const exactSections = buildChangeSections(exact.rows);
+  const movedSections = exactSections.filter((section) => section.moveId != null);
+  check(
+    'moved sections link to their peer',
+    movedSections.length === 2 &&
+      movedSections.every((section) => section.movePeerRowIndex != null),
+    movedSections,
+  );
+  const exactPatch = buildUnifiedPatch(exact.rows, 'all');
+  check(
+    'move metadata does not change patch semantics',
+    applyPatch(exactOld, exactPatch) === exactNew,
+    exactPatch,
+  );
+
+  const fuzzyRows = [
+    { kind: 'deleted' as const, oldLine: 'Project Atlas status: ready', newLine: null, oldNum: 1, newNum: null },
+    { kind: 'deleted' as const, oldLine: 'Owner: Alice', newLine: null, oldNum: 2, newNum: null },
+    { kind: 'deleted' as const, oldLine: 'Due: Friday', newLine: null, oldNum: 3, newNum: null },
+    { kind: 'equal' as const, oldLine: 'separator', newLine: 'separator', oldNum: 4, newNum: 1 },
+    { kind: 'added' as const, oldLine: null, newLine: 'Project Atlas status: ready', oldNum: null, newNum: 2 },
+    { kind: 'added' as const, oldLine: null, newLine: 'Owner: Bob', oldNum: null, newNum: 3 },
+    { kind: 'added' as const, oldLine: null, newLine: 'Due: Friday', oldNum: null, newNum: 4 },
+  ];
+  const fuzzy = detectMovedBlocks(fuzzyRows);
+  check(
+    'lightly edited moved block is paired',
+    fuzzy.pairs.length === 1 &&
+      fuzzy.pairs[0]?.exact === false &&
+      fuzzy.pairs[0]?.similarity >= 0.72,
+    fuzzy.pairs,
+  );
+
+  const duplicateRows = [
+    { kind: 'deleted' as const, oldLine: 'duplicate block first line', newLine: null, oldNum: 1, newNum: null },
+    { kind: 'deleted' as const, oldLine: 'duplicate block second line', newLine: null, oldNum: 2, newNum: null },
+    { kind: 'equal' as const, oldLine: 'one', newLine: 'one', oldNum: 3, newNum: 1 },
+    { kind: 'deleted' as const, oldLine: 'duplicate block first line', newLine: null, oldNum: 4, newNum: null },
+    { kind: 'deleted' as const, oldLine: 'duplicate block second line', newLine: null, oldNum: 5, newNum: null },
+    { kind: 'equal' as const, oldLine: 'two', newLine: 'two', oldNum: 6, newNum: 2 },
+    { kind: 'added' as const, oldLine: null, newLine: 'duplicate block first line', oldNum: null, newNum: 3 },
+    { kind: 'added' as const, oldLine: null, newLine: 'duplicate block second line', oldNum: null, newNum: 4 },
+    { kind: 'equal' as const, oldLine: 'three', newLine: 'three', oldNum: 7, newNum: 5 },
+    { kind: 'added' as const, oldLine: null, newLine: 'duplicate block first line', oldNum: null, newNum: 6 },
+    { kind: 'added' as const, oldLine: null, newLine: 'duplicate block second line', oldNum: null, newNum: 7 },
+  ];
+  const duplicate = detectMovedBlocks(duplicateRows);
+  check(
+    'ambiguous duplicate blocks are not guessed',
+    duplicate.pairs.length === 0 &&
+      duplicate.rows.every((row) => row.moveId == null),
+    duplicate.pairs,
+  );
+
+  const manyRows = [];
+  let oldNum = 0;
+  let newNum = 0;
+  for (let i = 0; i < 450; i++) {
+    manyRows.push(
+      { kind: 'deleted' as const, oldLine: `removed section ${i} alpha unique payload`, newLine: null, oldNum: ++oldNum, newNum: null },
+      { kind: 'deleted' as const, oldLine: `removed section ${i} beta unique payload`, newLine: null, oldNum: ++oldNum, newNum: null },
+      { kind: 'equal' as const, oldLine: `separator old ${i}`, newLine: `separator new ${i}`, oldNum: ++oldNum, newNum: ++newNum },
+    );
+  }
+  for (let i = 0; i < 450; i++) {
+    manyRows.push(
+      { kind: 'added' as const, oldLine: null, newLine: `different section ${i} gamma payload`, oldNum: null, newNum: ++newNum },
+      { kind: 'added' as const, oldLine: null, newLine: `different section ${i} delta payload`, oldNum: null, newNum: ++newNum },
+      { kind: 'equal' as const, oldLine: `tail old ${i}`, newLine: `tail new ${i}`, oldNum: ++oldNum, newNum: ++newNum },
+    );
+  }
+  const bounded = detectMovedBlocks(manyRows);
+  check(
+    'fuzzy move comparisons stay bounded on large candidate sets',
+    bounded.comparisons <= MAX_MOVE_COMPARISONS,
+    bounded.comparisons,
   );
 }
 

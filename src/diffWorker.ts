@@ -5,6 +5,7 @@ import {
   hasNoNewlineAtEof,
 } from './lib/diffEngine';
 import { DEFAULT_OPTIONS, type DiffOptions, type DiffResult } from './lib/types';
+import { detectMovedBlocks } from './lib/movedBlocks';
 
 interface DiffRequest {
   id: number;
@@ -27,6 +28,9 @@ self.onmessage = (e: MessageEvent<DiffRequest>) => {
   const { id, oldText, newText, options, oldName, newName } = e.data;
   try {
     const result = computeDiff(oldText, newText, options);
+    if (!result.aborted) {
+      result.rows = detectMovedBlocks(result.rows).rows;
+    }
     if (result.aborted) {
       self.postMessage({ id, ok: true, result } satisfies DiffResponse);
       return;
