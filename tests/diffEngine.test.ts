@@ -494,8 +494,10 @@ console.log('--- change sections ---');
 
 console.log('--- moved-block detection ---');
 {
-  const exactOld = 'start\nalpha moved line\nbeta moved line\nend\n';
-  const exactNew = 'start\nend\nalpha moved line\nbeta moved line\n';
+  const exactOld =
+    'start\nalpha moved line\nbeta moved line\nanchor one\nanchor two\nanchor three\nanchor four\nanchor five\nend\n';
+  const exactNew =
+    'start\nanchor one\nanchor two\nanchor three\nanchor four\nanchor five\nend\nalpha moved line\nbeta moved line\n';
   const exactDiff = computeDiff(exactOld, exactNew, base);
   const exact = detectMovedBlocks(exactDiff.rows);
   check('exact move produces one pair', exact.pairs.length === 1, exact.pairs);
