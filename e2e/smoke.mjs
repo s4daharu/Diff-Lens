@@ -328,7 +328,12 @@ const initialRowsCount = await page.locator('.diff-row').count();
 await page.locator('.gap-btn--all').first().evaluate((el) => el.click());
 await page.waitForTimeout(600);
 const afterExpandRowsCount = await page.locator('.diff-row').count();
-check('expanding gap adds visible rows', afterExpandRowsCount > initialRowsCount, `${initialRowsCount} → ${afterExpandRowsCount}`);
+const gapBtnsAfter = await page.locator('.gap-btn').count();
+check(
+  'expanding gap reveals content and removes its placeholder',
+  gapBtnsAfter < gapBtnsBefore && afterExpandRowsCount >= initialRowsCount,
+  `rows ${initialRowsCount} → ${afterExpandRowsCount}; gap buttons ${gapBtnsBefore} → ${gapBtnsAfter}`,
+);
 
 // diff navigation
 await page.getByLabel('Context lines').selectOption('all');
