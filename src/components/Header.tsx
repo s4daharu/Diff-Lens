@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   KeyboardIcon,
   LogoIcon,
+  UploadIcon,
   MoonIcon,
   SunIcon,
 } from './Icons';
@@ -15,6 +16,7 @@ interface HeaderProps {
   busy: boolean;
   onSelectPreset?: (preset: SamplePreset) => void;
   onOpenShortcuts?: () => void;
+  onImportSession?: (file: File) => void;
 }
 
 export function Header({
@@ -24,9 +26,11 @@ export function Header({
   busy,
   onSelectPreset,
   onOpenShortcuts,
+  onImportSession,
 }: HeaderProps) {
   const [samplesOpen, setSamplesOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const sessionInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!samplesOpen) return;
@@ -102,6 +106,32 @@ export function Header({
               </div>
             )}
           </div>
+        )}
+
+        {onImportSession && (
+          <>
+            <input
+              ref={sessionInputRef}
+              type="file"
+              accept=".difflens.json,.json,application/json"
+              hidden
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = '';
+                if (file) onImportSession(file);
+              }}
+            />
+            <button
+              type="button"
+              className="btn btn--ghost"
+              onClick={() => sessionInputRef.current?.click()}
+              title="Open a saved DiffLens comparison session"
+              aria-label="Open comparison session"
+            >
+              <UploadIcon size={16} />
+              <span className="btn__label">Open session</span>
+            </button>
+          </>
         )}
 
         {onOpenShortcuts && (

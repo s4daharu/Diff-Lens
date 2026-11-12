@@ -867,6 +867,28 @@ body {
   flex-shrink: 0;
 }
 
+.sources-session-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 280px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-elev));
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  color: var(--text-muted);
+  font-size: 11.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sources-session-name strong {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .sources-bar__actions {
   display: flex;
   align-items: center;
@@ -1197,6 +1219,46 @@ body {
 .dropdown-item:disabled:hover {
   background: transparent;
   color: var(--text);
+}
+
+/* Session save modal */
+
+.session-modal {
+  max-width: 480px;
+}
+
+.session-modal__body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.session-modal__label {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.session-modal__input {
+  width: 100%;
+  padding: 9px 11px;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+
+.session-modal__input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: var(--accent);
+}
+
+.session-modal__hint {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  line-height: 1.5;
 }
 
 /* Source editor modal */

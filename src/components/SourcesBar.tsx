@@ -7,6 +7,7 @@ interface SourcesBarProps {
   oldName: string | null;
   newName: string | null;
   identical: boolean;
+  sessionName: string | null;
   editorOpen: boolean;
   onEdit: () => void;
   onSwap: () => void;
@@ -18,6 +19,7 @@ export function SourcesBar({
   oldName,
   newName,
   identical,
+  sessionName,
   editorOpen,
   onEdit,
   onSwap,
@@ -28,6 +30,14 @@ export function SourcesBar({
   return (
     <div className="sources-bar">
       <div className="sources-bar__files">
+        {sessionName && (
+          <span
+            className="sources-session-name"
+            title={`Comparison session: ${sessionName}`}
+          >
+            Session <strong>{sessionName}</strong>
+          </span>
+        )}
         <span className="source-chip source-chip--old" title="Original text source">
           <span className="source-chip__dot" />
           <span className="source-chip__name">{oldName ?? 'Pasted text'}</span>

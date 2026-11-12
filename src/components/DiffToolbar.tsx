@@ -33,6 +33,7 @@ interface DiffToolbarProps {
   onDownloadPatch: () => void;
   onCopyMarkdown: () => void;
   onExportHtml: () => void;
+  onSaveSession: () => void;
   patchReady: boolean;
   copied: boolean;
   copiedMarkdown: boolean;
@@ -59,6 +60,7 @@ export function DiffToolbar({
   onDownloadPatch,
   onCopyMarkdown,
   onExportHtml,
+  onSaveSession,
   patchReady,
   copied,
   copiedMarkdown,
@@ -239,6 +241,7 @@ export function DiffToolbar({
             aria-label="Export options"
             aria-expanded={openMenu === 'export'}
             aria-haspopup="menu"
+            data-export-toggle="true"
           >
             <FileCodeIcon size={14} />
             <span className="btn__label">Export</span>
@@ -299,6 +302,18 @@ export function DiffToolbar({
               >
                 <DownloadIcon size={14} />
                 <span>Download HTML Report</span>
+              </button>
+              <button
+                type="button"
+                className="dropdown-item"
+                role="menuitem"
+                onClick={() => {
+                  onSaveSession();
+                  setOpenMenu(null);
+                }}
+              >
+                <DownloadIcon size={14} />
+                <span>Save comparison session</span>
               </button>
             </div>
           )}
