@@ -327,6 +327,9 @@ check('2000-line diff renders', true, `${perf}ms`);
 // back to side-by-side: use the change outline to jump to a modification
 // that starts outside the mounted virtual window.
 await page.getByRole('tab', { name: 'Side by side' }).click();
+await page.waitForSelector('.diff-view--side[data-virtualized="true"]', {
+  timeout: 5000,
+});
 check(
   '2000-line diff is virtualized',
   (await page.locator('.diff-view--side').getAttribute('data-virtualized')) === 'true',
