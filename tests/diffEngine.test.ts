@@ -18,6 +18,10 @@ import { buildVirtualOffsets, findVirtualIndex, getVirtualRange } from '../src/l
 import { buildChangeSections } from '../src/lib/changeSections';
 import { mergeChangeSections } from '../src/lib/mergeSections';
 import {
+  describeReportOptions,
+  summarizeHiddenContext,
+} from '../src/lib/report';
+import {
   MAX_MOVE_COMPARISONS,
   detectMovedBlocks,
 } from '../src/lib/movedBlocks';
@@ -763,6 +767,52 @@ console.log('--- section merge operations ---');
     'moved pair is accepted atomically',
     movedPair.length === 2 && movedAccepted.oldText === movedNew,
     { movedPair, merged: movedAccepted.oldText },
+  );
+}
+
+console.log('--- printable report metadata ---');
+{
+  const reportOptions: DiffOptions = {
+    ...base,
+    ignoreCase: true,
+    ignoreWhitespace: true,
+    context: 2,
+    granularity: 'smart',
+    ignoreRules: [
+      { kind: 'literal', pattern: 'BUILD_ID', enabled: true },
+      { kind: 'regex', pattern: '\\d{4}-\\d{2}-\\d{2}', enabled: true },
+      { kind: 'literal', pattern: 'disabled', enabled: false },
+    ],
+  };
+  const labels = describeReportOptions(reportOptions);
+  check('report discloses Smart precision', labels.includes('Precision: Smart'));
+  check(
+    'report discloses bounded context',
+    labels.includes('Context: 2 unchanged lines around changes'),
+    labels,
+  );
+  check('report discloses ignore case', labels.includes('Ignore case'));
+  check(
+    'report discloses enabled custom rules only',
+    labels.includes('Ignore literal: “BUILD_ID”') &&
+      labels.includes('Ignore regex: /\\d{4}-\\d{2}-\\d{2}/') &&
+      !labels.some((label) => label.includes('disabled')),
+    labels,
+  );
+
+  const contextRows = applyContext(
+    computeDiff(
+      'a\nb\nc\nd\ne\nf\ng\n',
+      'a\nb\nC\nd\ne\nF\ng\n',
+      base,
+    ).rows,
+    0,
+  );
+  const hidden = summarizeHiddenContext(contextRows);
+  check(
+    'report summarizes collapsed unchanged context',
+    hidden.gapCount > 0 && hidden.hiddenLines > 0,
+    hidden,
   );
 }
 
