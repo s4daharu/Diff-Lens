@@ -527,7 +527,7 @@ await page.waitForTimeout(300);
 const matchesCount = await page.locator('.search-match').count();
 check('search matches highlighted', matchesCount > 0, `matches=${matchesCount}`);
 await page.locator('.diff-search-clear').click();
-await page.getByRole('button', { name: 'Close' }).click();
+await page.getByRole('button', { name: 'Close', exact: true }).click();
 
 // preset samples dropdown
 await page.getByRole('button', { name: 'Samples' }).click();

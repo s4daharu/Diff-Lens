@@ -57,7 +57,7 @@ export function SourceEditorModal({
       (original ?? getFocusable()[0] ?? card)?.focus();
     };
 
-    const frame = window.requestAnimationFrame(focusInitial);
+    focusInitial();
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -96,7 +96,6 @@ export function SourceEditorModal({
     window.addEventListener('keydown', onKeyDown);
     document.addEventListener('focusin', onFocus as unknown as EventListener);
     return () => {
-      window.cancelAnimationFrame(frame);
       document.body.style.overflow = '';
       window.removeEventListener('keydown', onKeyDown);
       document.removeEventListener(
