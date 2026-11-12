@@ -511,6 +511,15 @@ export default function App() {
     setEditorOpen(false);
   }, []);
 
+  const handleCloseSidebar = useCallback(() => {
+    setSidebarOpen(false);
+    window.requestAnimationFrame(() => {
+      document
+        .querySelector<HTMLButtonElement>('[data-details-toggle="true"]')
+        ?.focus();
+    });
+  }, []);
+
   const handleHideWhitespaceChanges = useCallback(
     (hidden: boolean) => {
       if (options.ignoreWhitespace === hidden) return;
@@ -803,6 +812,7 @@ export default function App() {
             oldName={fileNames.old}
             newName={fileNames.new}
             identical={!!identical}
+            editorOpen={editorOpen}
             onEdit={handleEditSources}
             onSwap={handleSwap}
           />
@@ -825,6 +835,7 @@ export default function App() {
               onOptionsChange={setOptions}
               syntaxEnabled={syntaxEnabled}
               onSyntaxChange={setSyntaxEnabled}
+              onClose={handleCloseSidebar}
             />
             )}
 

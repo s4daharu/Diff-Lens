@@ -117,6 +117,16 @@ check(
 check('toolbar visible', await page.locator('.diff-toolbar').isVisible());
 await ensureSidebarOpen();
 check('sidebar opens on demand', await page.locator('.diff-sidebar').isVisible());
+await page.getByRole('button', { name: 'Close diff details' }).click();
+await page.waitForTimeout(100);
+check('sidebar close hides details', (await page.locator('.diff-sidebar').count()) === 0);
+check(
+  'closing details restores toggle focus',
+  await page.getByRole('button', { name: 'Diff details' }).evaluate(
+    (button) => document.activeElement === button,
+  ),
+);
+await ensureSidebarOpen();
 
 const viewMenu = await openViewOptions();
 check(
@@ -160,6 +170,26 @@ await page.locator('.change-item').first().click();
 await page.waitForTimeout(300);
 const activeRow = await page.locator('.diff-row--active').count();
 check('section click highlights its changed rows', activeRow >= 1);
+await page.waitForTimeout(100);
+check(
+  'section navigation focuses the announced diff row',
+  await page.locator('.diff-row--active').first().evaluate(
+    (row) => document.activeElement === row && !!row.getAttribute('aria-label'),
+  ),
+);
+
+const minimap = page.getByRole('slider', { name: 'Difference minimap' });
+check('minimap is keyboard accessible', await minimap.isVisible());
+await minimap.focus();
+await page.keyboard.press('End');
+await page.waitForTimeout(150);
+check(
+  'minimap End jumps to the last mapped change',
+  (await minimap.getAttribute('aria-valuenow')) ===
+    (await minimap.getAttribute('aria-valuemax')),
+);
+await page.keyboard.press('Home');
+check('minimap Home returns to first mapped change', (await minimap.getAttribute('aria-valuenow')) === '1');
 
 // toggle inline view
 await page.getByRole('tab', { name: 'Inline' }).click();
@@ -188,14 +218,32 @@ const editSources = () => page.getByRole('button', { name: 'Edit sources' }).cli
 const closeEditor = () =>
   page.getByRole('button', { name: 'Done', exact: true }).click();
 
+const editTrigger = page.getByRole('button', { name: 'Edit sources' });
+await editTrigger.focus();
 await editSources();
 await page.waitForSelector('.source-editor');
 const ta = page.locator('.source-editor .input-panel--left textarea');
 const ta2 = page.locator('.source-editor .input-panel--right textarea');
+check(
+  'source editor initially focuses original text',
+  await ta.evaluate((textarea) => document.activeElement === textarea),
+);
+await page.keyboard.press('Shift+Tab');
+check(
+  'source editor keeps keyboard focus inside the dialog',
+  await page.locator('.source-editor').evaluate(
+    (dialog) => dialog.contains(document.activeElement),
+  ),
+);
+await ta.focus();
 await ta.fill('HELLO WORLD\nsecond line\nthird line\n');
 await ta2.fill('hello world\nsecond line\nthird line\n');
 await closeEditor();
 await page.waitForTimeout(800);
+check(
+  'source editor restores focus to its opener',
+  await editTrigger.evaluate((button) => document.activeElement === button),
+);
 let msgCount = await page.locator('.sidebar-identical-msg').count();
 check('case-differing texts show as different (no identical banner)', msgCount === 0, `count=${msgCount}`);
 

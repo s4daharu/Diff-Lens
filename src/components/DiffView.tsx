@@ -199,6 +199,53 @@ function useVirtualWindow<T>(
   };
 }
 
+function describeDiffRow(row: DiffRow): string {
+  const kind =
+    row.kind === 'added'
+      ? 'Added'
+      : row.kind === 'deleted'
+        ? 'Removed'
+        : row.kind === 'modified'
+          ? 'Modified'
+          : 'Unchanged';
+  const locations = [
+    row.oldNum != null ? `original line ${row.oldNum}` : null,
+    row.newNum != null ? `changed line ${row.newNum}` : null,
+  ].filter(Boolean);
+  return locations.length > 0 ? `${kind}, ${locations.join(', ')}` : kind;
+}
+
+function describeInlineRow(
+  row: DiffRow,
+  sign: string,
+  oldNum: number | null,
+  newNum: number | null,
+): string {
+  const kind =
+    sign === '+'
+      ? 'Added'
+      : sign === '-'
+        ? 'Removed'
+        : row.kind === 'equal'
+          ? 'Unchanged'
+          : 'Changed';
+  const lineNumber = newNum ?? oldNum;
+  return lineNumber == null ? kind : `${kind}, line ${lineNumber}`;
+}
+
+function focusDiffRow(id: string): () => void {
+  let secondFrame = 0;
+  const firstFrame = window.requestAnimationFrame(() => {
+    secondFrame = window.requestAnimationFrame(() => {
+      document.getElementById(id)?.focus({ preventScroll: true });
+    });
+  });
+  return () => {
+    window.cancelAnimationFrame(firstFrame);
+    if (secondFrame) window.cancelAnimationFrame(secondFrame);
+  };
+}
+
 function highlightMatches(text: string, query?: string) {
   if (!query || !query.trim() || !text) return text;
   const q = query.trim();
@@ -433,21 +480,25 @@ function GapRow({
 
 function MinimapGutter({
   rows,
+  activeRowIndex,
   onJumpToRow,
 }: {
   rows: DiffRow[];
+  activeRowIndex?: number | null;
   onJumpToRow: (rowIndex: number) => void;
 }) {
   const gutterRef = useRef<HTMLDivElement>(null);
   const [markers, setMarkers] = useState<
     { index: number; percent: number; kind: string }[]
   >([]);
+  const [selectedMarker, setSelectedMarker] = useState(0);
 
   useEffect(() => {
     const gutter = gutterRef.current;
     if (!gutter) return;
     const scroller = gutter.parentElement;
-    const content = scroller?.querySelector<HTMLElement>('.diff-rows-container') ?? null;
+    const content =
+      scroller?.querySelector<HTMLElement>('.diff-rows-container') ?? null;
 
     const compute = () => {
       const total = rows.length;
@@ -457,9 +508,7 @@ function MinimapGutter({
         setMarkers([]);
         return;
       }
-      // Fraction of the gutter that actually contains rendered content
       const scale = Math.min(1, contentH / viewH);
-      // bucket markers to avoid overlapping clutter on huge files
       const buckets = new Map<number, { index: number; kind: string }>();
       rows.forEach((row, i) => {
         if (row.kind !== 'equal' && row.kind !== 'gap') {
@@ -470,11 +519,11 @@ function MinimapGutter({
         }
       });
       const list: { index: number; percent: number; kind: string }[] = [];
-      for (const [bucket, v] of buckets) {
+      for (const [bucket, value] of buckets) {
         list.push({
-          index: v.index,
+          index: value.index,
           percent: (bucket / 200) * scale * 100,
-          kind: v.kind,
+          kind: value.kind,
         });
       }
       setMarkers(list);
@@ -486,14 +535,44 @@ function MinimapGutter({
     return () => ro.disconnect();
   }, [rows]);
 
+  useEffect(() => {
+    if (markers.length === 0) {
+      setSelectedMarker(0);
+      return;
+    }
+    if (activeRowIndex == null) {
+      setSelectedMarker((index) => Math.min(index, markers.length - 1));
+      return;
+    }
+
+    let nearest = 0;
+    let best = Infinity;
+    markers.forEach((marker, index) => {
+      const distance = Math.abs(marker.index - activeRowIndex);
+      if (distance < best) {
+        best = distance;
+        nearest = index;
+      }
+    });
+    setSelectedMarker(nearest);
+  }, [activeRowIndex, markers]);
+
   const hasChanges = useMemo(
-    () => rows.some((r) => r.kind !== 'equal' && r.kind !== 'gap'),
+    () => rows.some((row) => row.kind !== 'equal' && row.kind !== 'gap'),
     [rows],
   );
 
   if (!hasChanges) return null;
 
+  const jumpToMarker = (position: number) => {
+    if (markers.length === 0) return;
+    const next = Math.max(0, Math.min(markers.length - 1, position));
+    setSelectedMarker(next);
+    onJumpToRow(markers[next].index);
+  };
+
   const handleGutterClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (markers.length === 0) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const y = e.clientY - rect.top;
     const pct = y / rect.height;
@@ -506,32 +585,70 @@ function MinimapGutter({
       0,
       Math.min(rows.length - 1, Math.floor((pct / scale) * rows.length)),
     );
-    // find nearest diff marker
-    let nearest = markers[0]?.index ?? 0;
+    let nearestPosition = 0;
     let best = Infinity;
-    for (const m of markers) {
-      const d = Math.abs(m.index - targetIndex);
-      if (d < best) {
-        best = d;
-        nearest = m.index;
+    markers.forEach((marker, index) => {
+      const distance = Math.abs(marker.index - targetIndex);
+      if (distance < best) {
+        best = distance;
+        nearestPosition = index;
       }
-    }
-    onJumpToRow(nearest);
+    });
+    jumpToMarker(nearestPosition);
   };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    let next: number | null = null;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+      next = selectedMarker + 1;
+    } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+      next = selectedMarker - 1;
+    } else if (e.key === 'PageDown') {
+      next = selectedMarker + 10;
+    } else if (e.key === 'PageUp') {
+      next = selectedMarker - 10;
+    } else if (e.key === 'Home') {
+      next = 0;
+    } else if (e.key === 'End') {
+      next = markers.length - 1;
+    }
+
+    if (next != null) {
+      e.preventDefault();
+      jumpToMarker(next);
+    }
+  };
+
+  const selected = markers[selectedMarker];
 
   return (
     <div
       ref={gutterRef}
       className="diff-minimap"
-      aria-hidden="true"
-      title="Difference minimap — click to jump to nearest change"
+      role="slider"
+      tabIndex={0}
+      aria-label="Difference minimap"
+      aria-orientation="vertical"
+      aria-valuemin={1}
+      aria-valuemax={Math.max(1, markers.length)}
+      aria-valuenow={markers.length > 0 ? selectedMarker + 1 : 1}
+      aria-valuetext={
+        selected
+          ? `Change ${selectedMarker + 1} of ${markers.length}, ${selected.kind}, row ${selected.index + 1}`
+          : 'No mapped changes'
+      }
+      title="Difference minimap — click or use arrow, Page Up/Down, Home, and End keys"
       onClick={handleGutterClick}
+      onKeyDown={handleKeyDown}
     >
-      {markers.map((m) => (
+      {markers.map((marker, index) => (
         <div
-          key={m.index}
-          className={`minimap-marker minimap-marker--${m.kind}`}
-          style={{ top: `${m.percent}%` }}
+          key={marker.index}
+          className={`minimap-marker minimap-marker--${marker.kind}${
+            index === selectedMarker ? ' minimap-marker--selected' : ''
+          }`}
+          style={{ top: `${marker.percent}%` }}
+          aria-hidden="true"
         />
       ))}
     </div>
@@ -562,7 +679,9 @@ function SideBySide({
   );
 
   useEffect(() => {
-    if (activeChangeRowIndex != null) jumpToRow(activeChangeRowIndex);
+    if (activeChangeRowIndex == null) return;
+    jumpToRow(activeChangeRowIndex);
+    return focusDiffRow(`diff-row-side-${activeChangeRowIndex}`);
   }, [activeChangeRowIndex, jumpToRow]);
 
   const renderedRows = rows.slice(virtual.start, virtual.end);
@@ -572,7 +691,15 @@ function SideBySide({
       className={`diff-view diff-view--side${lineNumbers ? '' : ' no-line-nums'}`}
       data-virtualized={virtual.virtualized ? 'true' : 'false'}
       data-total-rows={rows.length}
+      role="region"
+      aria-label={`Side-by-side diff, ${rows.length} rows`}
+      aria-describedby="side-diff-help"
     >
+      <p id="side-diff-help" className="sr-only">
+        Changed rows are announced when change-section navigation moves focus.
+        The difference minimap is keyboard accessible with arrow, Page Up and
+        Page Down, Home, and End keys.
+      </p>
       <div className="diff-col-head">
         {lineNumbers && <span className="ln ln--head" />}
         <span className="col-title col-title--old">Original</span>
@@ -582,6 +709,8 @@ function SideBySide({
       <div
         ref={scrollRef}
         className={`diff-scroll ${wrap ? 'diff-scroll--wrap' : ''}`}
+        tabIndex={0}
+        aria-label="Side-by-side diff lines"
       >
         <div
           className="diff-rows-container"
@@ -609,6 +738,13 @@ function SideBySide({
                 ref={(node) => virtual.measureRow(i, node)}
                 id={`diff-row-side-${i}`}
                 key={i}
+                role={row.kind === 'equal' ? undefined : 'group'}
+                tabIndex={i === activeChangeRowIndex ? -1 : undefined}
+                aria-current={i === activeChangeRowIndex ? 'true' : undefined}
+                aria-label={
+                  row.kind === 'equal' ? undefined : describeDiffRow(row)
+                }
+                data-diff-row-index={i}
                 className={`diff-row diff-row--${row.kind} ${
                   activeChangeRowIndex != null &&
                   i >= activeChangeRowIndex &&
@@ -644,7 +780,11 @@ function SideBySide({
             />
           )}
         </div>
-        <MinimapGutter rows={rows} onJumpToRow={jumpToRow} />
+        <MinimapGutter
+          rows={rows}
+          activeRowIndex={activeChangeRowIndex}
+          onJumpToRow={jumpToRow}
+        />
       </div>
     </div>
   );
@@ -729,7 +869,9 @@ function InlineView({
   );
 
   useEffect(() => {
-    if (activeChangeRowIndex != null) jumpToRow(activeChangeRowIndex);
+    if (activeChangeRowIndex == null) return;
+    jumpToRow(activeChangeRowIndex);
+    return focusDiffRow(`diff-row-inline-p${activeChangeRowIndex}-0`);
   }, [activeChangeRowIndex, jumpToRow]);
 
   const handleCopyLine = (text: string, idx: number, e: React.MouseEvent) => {
@@ -751,7 +893,15 @@ function InlineView({
       className={`diff-view diff-view--inline${lineNumbers ? '' : ' no-line-nums'}`}
       data-virtualized={virtual.virtualized ? 'true' : 'false'}
       data-total-rows={expandedRows.length}
+      role="region"
+      aria-label={`Inline diff, ${rows.length} source rows`}
+      aria-describedby="inline-diff-help"
     >
+      <p id="inline-diff-help" className="sr-only">
+        Changed rows are announced when change-section navigation moves focus.
+        The difference minimap is keyboard accessible with arrow, Page Up and
+        Page Down, Home, and End keys.
+      </p>
       <div className="diff-col-head diff-col-head--inline">
         {lineNumbers && <span className="ln ln--head" title="Original line #" />}
         {lineNumbers && <span className="ln ln--head" title="Changed line #" />}
@@ -761,6 +911,8 @@ function InlineView({
       <div
         ref={scrollRef}
         className={`diff-scroll ${wrap ? 'diff-scroll--wrap' : ''}`}
+        tabIndex={0}
+        aria-label="Inline diff lines"
       >
         <div
           className="diff-rows-container"
@@ -804,6 +956,23 @@ function InlineView({
                 ref={(node) => virtual.measureRow(i, node)}
                 id={`diff-row-inline-p${parentRowIndex}-${subIndex}`}
                 key={i}
+                role={row.kind === 'equal' ? undefined : 'group'}
+                tabIndex={
+                  parentRowIndex === activeChangeRowIndex && subIndex === 0
+                    ? -1
+                    : undefined
+                }
+                aria-current={
+                  parentRowIndex === activeChangeRowIndex && subIndex === 0
+                    ? 'true'
+                    : undefined
+                }
+                aria-label={
+                  row.kind === 'equal'
+                    ? undefined
+                    : describeInlineRow(row, sign, oldNum, newNum)
+                }
+                data-diff-row-index={parentRowIndex}
                 className={`diff-row diff-row--${kind} ${
                   activeChangeRowIndex != null &&
                   parentRowIndex >= activeChangeRowIndex &&
@@ -873,7 +1042,11 @@ function InlineView({
             />
           )}
         </div>
-        <MinimapGutter rows={rows} onJumpToRow={jumpToRow} />
+        <MinimapGutter
+          rows={rows}
+          activeRowIndex={activeChangeRowIndex}
+          onJumpToRow={jumpToRow}
+        />
       </div>
     </div>
   );

@@ -5,6 +5,7 @@ import { Checkbox, Select } from './OptionControls';
 import {
   CheckIcon,
   ChevronDownIcon,
+  CloseIcon,
   ChevronUpIcon,
   SlidersIcon,
 } from './Icons';
@@ -25,6 +26,7 @@ interface DiffSidebarProps {
   onOptionsChange: (next: DiffOptions) => void;
   syntaxEnabled: boolean;
   onSyntaxChange: (enabled: boolean) => void;
+  onClose: () => void;
 }
 
 const KIND_LABELS: Record<ChangeSectionKind, string> = {
@@ -62,6 +64,7 @@ export function DiffSidebar({
   onOptionsChange,
   syntaxEnabled,
   onSyntaxChange,
+  onClose,
 }: DiffSidebarProps) {
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -78,7 +81,29 @@ export function DiffSidebar({
     totalDiffLines > 0 ? (n / totalDiffLines) * 100 : 0;
 
   return (
-    <aside id="diff-sidebar" className="diff-sidebar" aria-label="Diff summary and options">
+    <aside
+      id="diff-sidebar"
+      className="diff-sidebar"
+      aria-labelledby="diff-sidebar-title"
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          onClose();
+        }
+      }}
+    >
+      <div className="diff-sidebar__header">
+        <h2 id="diff-sidebar-title">Diff details</h2>
+        <button
+          type="button"
+          className="btn btn--small btn--icon btn--ghost"
+          onClick={onClose}
+          aria-label="Close diff details"
+          title="Close details"
+        >
+          <CloseIcon size={15} />
+        </button>
+      </div>
       {identical && stats && (
         <div className="sidebar-section">
           <div className="sidebar-identical">
@@ -219,6 +244,12 @@ export function DiffSidebar({
                       }`}
                       onClick={() => onSelectSection(entry.rowIndex)}
                       title={`Jump to ${KIND_LABELS[entry.kind].toLowerCase()} change section`}
+                      aria-current={
+                        activeSectionStartRow === entry.rowIndex
+                          ? 'true'
+                          : undefined
+                      }
+                      aria-label={`Section ${i + 1}: ${KIND_LABELS[entry.kind]}, ${formatLocation(entry)}, ${entry.count} changed ${entry.count === 1 ? 'row' : 'rows'}`}
                     >
                       <span className="change-item__idx">§{i + 1}</span>
                       <span className="change-item__loc">
@@ -262,7 +293,7 @@ export function DiffSidebar({
             }
           />
           <Checkbox
-            label="Hide whitespace sections"
+            label="Hide whitespace changes"
             checked={options.ignoreWhitespace}
             onChange={(ignoreWhitespace) =>
               onOptionsChange({ ...options, ignoreWhitespace })

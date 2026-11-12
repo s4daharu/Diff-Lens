@@ -14,7 +14,7 @@ DiffLens is a client-side text comparison app; all user text stays in the browse
 - [x] Keep source entry visible until both sources are explicitly provided, including empty-file support; collapse desktop details by default; navigate contiguous change sections instead of individual changed rows.
 
 ## Next milestones
-- [ ] Strengthen accessible descriptions and focus behavior for diff rows, minimap, and editor drawer.
+- [x] Strengthen accessible descriptions and focus behavior for diff rows, minimap, and editor drawer, including keyboard minimap navigation, focused section announcements, modal focus trapping/restoration, Details focus restoration, and reduced-motion handling.
 - [ ] Add optional import/export of named comparison sessions without sending data to a server.
 
 Before closing any milestone, run `npm run lint`, `npm run test`, `npm run build`, and `npm run test:e2e`.

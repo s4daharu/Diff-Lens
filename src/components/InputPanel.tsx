@@ -270,6 +270,7 @@ export function InputPanel({
 
         <textarea
           className="input-panel__textarea"
+          aria-label={title}
           value={value}
           onChange={(e) => {
             onChange(e.target.value);

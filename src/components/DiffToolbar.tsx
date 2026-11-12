@@ -197,6 +197,7 @@ export function DiffToolbar({
             aria-pressed={sidebarOpen}
             aria-expanded={sidebarOpen}
             aria-controls="diff-sidebar"
+            data-details-toggle="true"
             onClick={onToggleSidebar}
             title={sidebarOpen ? 'Hide diff details' : 'Show diff details'}
             aria-label="Diff details"

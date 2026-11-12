@@ -7,6 +7,7 @@ interface SourcesBarProps {
   oldName: string | null;
   newName: string | null;
   identical: boolean;
+  editorOpen: boolean;
   onEdit: () => void;
   onSwap: () => void;
 }
@@ -17,6 +18,7 @@ export function SourcesBar({
   oldName,
   newName,
   identical,
+  editorOpen,
   onEdit,
   onSwap,
 }: SourcesBarProps) {
@@ -68,6 +70,9 @@ export function SourcesBar({
           className="btn btn--small"
           onClick={onEdit}
           title="Edit original and changed text (Ctrl+E)"
+          aria-haspopup="dialog"
+          aria-expanded={editorOpen}
+          aria-controls="source-editor-dialog"
         >
           <PencilIcon size={14} />
           <span className="btn__label">Edit sources</span>
