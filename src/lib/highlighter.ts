@@ -1,39 +1,29 @@
 import {
   createHighlighterCore,
   type HighlighterCore,
+  type LanguageInput,
   type ThemedToken,
 } from 'shiki';
 import { createOnigurumaEngine } from 'shiki/engine/oniguruma';
+import type { LangId } from './syntaxLanguages';
 
-const LANG_IMPORTS: Record<(typeof LANGS)[number], Promise<unknown>> = {
-  json: import('shiki/langs/json.mjs'),
-  python: import('shiki/langs/python.mjs'),
-  typescript: import('shiki/langs/typescript.mjs'),
-  javascript: import('shiki/langs/javascript.mjs'),
-  markdown: import('shiki/langs/markdown.mjs'),
-  sql: import('shiki/langs/sql.mjs'),
-  html: import('shiki/langs/html.mjs'),
-  css: import('shiki/langs/css.mjs'),
-  bash: import('shiki/langs/bash.mjs'),
+const LANG_IMPORTS: Record<Exclude<LangId, 'text'>, LanguageInput> = {
+  abap: () => import('./grammars/abap'),
+  json: () => import('shiki/langs/json.mjs'),
+  python: () => import('shiki/langs/python.mjs'),
+  typescript: () => import('shiki/langs/typescript.mjs'),
+  javascript: () => import('shiki/langs/javascript.mjs'),
+  markdown: () => import('shiki/langs/markdown.mjs'),
+  sql: () => import('shiki/langs/sql.mjs'),
+  html: () => import('shiki/langs/html.mjs'),
+  css: () => import('shiki/langs/css.mjs'),
+  bash: () => import('shiki/langs/bash.mjs'),
 };
 
 let highlighterPromise: Promise<HighlighterCore> | null = null;
 
-const LANGS = [
-  'json',
-  'python',
-  'typescript',
-  'javascript',
-  'markdown',
-  'sql',
-  'html',
-  'css',
-  'bash',
-] as const;
-
-export type LangId = (typeof LANGS)[number] | 'text';
-
 const EXT_MAP: Record<string, LangId> = {
+  abap: 'abap',
   json: 'json',
   jsonc: 'json',
   py: 'python',
@@ -77,9 +67,12 @@ export async function getHighlighter(): Promise<HighlighterCore> {
       themes: [
         import('@shikijs/themes/github-light'),
         import('@shikijs/themes/github-dark'),
-      ] as never,
-      langs: Object.values(LANG_IMPORTS) as never,
+      ],
+      langs: [],
       engine: createOnigurumaEngine(import('shiki/wasm')),
+    }).catch((error: unknown) => {
+      highlighterPromise = null;
+      throw error;
     });
   }
   return highlighterPromise;
@@ -89,12 +82,14 @@ export function detectLang(
   oldName: string | null,
   newName: string | null,
   text: string,
+  alternateText = '',
 ): LangId {
   for (const name of [newName, oldName]) {
     const ext = name?.split('.').pop()?.toLowerCase();
-    if (ext && EXT_MAP[ext]) return EXT_MAP[ext];
+    if (ext && Object.hasOwn(EXT_MAP, ext)) return EXT_MAP[ext];
   }
-  return sniffLang(text);
+  const language = sniffLang(text);
+  return language === 'text' && alternateText ? sniffLang(alternateText) : language;
 }
 
 function sniffLang(text: string): LangId {
@@ -108,6 +103,13 @@ function sniffLang(text: string): LangId {
     }
   }
   if (/^#!\s*\/.*\b(bash|sh|zsh)\b/m.test(head)) return 'bash';
+  if (
+    /^[ \t]*(?:REPORT[ \t]+[ZY]\w*|START-OF-SELECTION)[ \t]*\./im.test(head) ||
+    /^[ \t]*CLASS[ \t]+[\w/]+[ \t]+(?:DEFINITION|IMPLEMENTATION)(?:[ \t]+[^.\n]+)?[ \t]*\./im.test(head) ||
+    /^[ \t]*(?:CLASS-)?DATA(?:[ \t]*:?[ \t]+[\w/]+[ \t]+(?:TYPE|LIKE)[ \t]+[^.\n]+|\(\w+\)[ \t]*=[ \t]*[^.\n]+)\./im.test(head) ||
+    /^[ \t]*LOOP[ \t]+AT[ \t]+[^.\n]+[ \t]+(?:INTO|ASSIGNING)[ \t]+[^.\n]+\./im.test(head)
+  )
+    return 'abap';
   if (/^\s*<(?:!doctype|html|\w+[\s>])/im.test(head) && /<\/\w+>/i.test(head))
     return 'html';
   if (/(^|\n)\s*(def |class \w+[(:]|import \w+$|from \w+ import )/m.test(head))
@@ -127,6 +129,7 @@ function sniffLang(text: string): LangId {
 
 const cache = new Map<string, ThemedToken[]>();
 const CACHE_LIMIT = 8000;
+const MAX_HIGHLIGHT_LINE_LENGTH = 10_000;
 
 export interface LineTokenizer {
   lang: LangId;
@@ -134,6 +137,20 @@ export interface LineTokenizer {
 }
 
 const tokenizerCache = new Map<string, Promise<LineTokenizer>>();
+const languageLoads = new Map<Exclude<LangId, 'text'>, Promise<void>>();
+
+async function loadLanguage(lang: Exclude<LangId, 'text'>): Promise<HighlighterCore> {
+  const highlighter = await getHighlighter();
+  if (!highlighter.getLoadedLanguages().includes(lang)) {
+    let load = languageLoads.get(lang);
+    if (!load) {
+      load = highlighter.loadLanguage(LANG_IMPORTS[lang]).finally(() => languageLoads.delete(lang));
+      languageLoads.set(lang, load);
+    }
+    await load;
+  }
+  return highlighter;
+}
 
 export function createLineTokenizer(
   lang: LangId,
@@ -142,7 +159,10 @@ export function createLineTokenizer(
   const key = `${lang}:${theme}`;
   let entry = tokenizerCache.get(key);
   if (!entry) {
-    entry = buildLineTokenizer(lang, theme);
+    entry = buildLineTokenizer(lang, theme).catch((error: unknown) => {
+      tokenizerCache.delete(key);
+      throw error;
+    });
     tokenizerCache.set(key, entry);
   }
   return entry;
@@ -155,13 +175,13 @@ async function buildLineTokenizer(
   if (lang === 'text') {
     return { lang, getTokens: () => null };
   }
-  const hl = await getHighlighter();
+  const hl = await loadLanguage(lang);
   const themeName = THEME[theme];
   const cacheKeyPrefix = `${lang}:${themeName}:`;
   const tokenizer: LineTokenizer = {
     lang,
     getTokens(line: string): ThemedToken[] | null {
-      if (!line.trim()) return null;
+      if (line.length > MAX_HIGHLIGHT_LINE_LENGTH || !line.trim()) return null;
       const key = cacheKeyPrefix + line;
       const hit = cache.get(key);
       if (hit) return hit;

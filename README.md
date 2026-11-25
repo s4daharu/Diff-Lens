@@ -15,6 +15,10 @@ with all diff computation happening in a Web Worker.
 - Local image comparison for PNG/JPEG/WebP with side-by-side, slider, fade,
   subtract, and highlight modes (up to 25 MB per file and 16 megapixels per comparison canvas)
 - Intra-line highlighting at character, word, or Smart automatic granularity
+- Syntax highlighting for ABAP, Bash, CSS, HTML, JavaScript, JSON, Markdown,
+  Python, SQL, and TypeScript. `.abap` files are recognized automatically;
+  **View → Language** shows the detected language and lets you override it or
+  choose Plain text. Saved comparisons retain the override.
 - Dual source editors with an explicit **Compare** action, plus a compact,
   resizable **Edit sources** dock. Edit one or both sides while the diff updates;
   normal edits preserve file names and line endings.
@@ -29,6 +33,7 @@ with all diff computation happening in a Web Worker.
   result, and filtered matches are distinguished from identical texts.
 - Ignore case / whitespace / line endings (CRLF) plus ordered literal/regex custom ignore rules
 - Adjustable context lines with hidden-region collapse
+  and a single reveal action for short gaps
 - Diff stats, change navigation in the toolbar, and find-in-diff with match count
   and navigation through collapsed and off-screen lines
 - Copy or download either source directly, plus unified `.patch`, Markdown,

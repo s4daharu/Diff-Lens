@@ -37,7 +37,7 @@ export function MergeButtons({
         aria-label={`Apply Changed ${newRange} to Original ${oldRange}${moved}`}
       >
         <span aria-hidden="true">←</span>
-        {!compact && <span>Changed → Original</span>}
+        <span className="merge-action-btn__label" aria-hidden="true">Changed → Original</span>
       </button>
       <button
         type="button"
@@ -47,7 +47,7 @@ export function MergeButtons({
         title="Apply Original → Changed"
         aria-label={`Apply Original ${oldRange} to Changed ${newRange}${moved}`}
       >
-        {!compact && <span>Original → Changed</span>}
+        <span className="merge-action-btn__label" aria-hidden="true">Original → Changed</span>
         <span aria-hidden="true">→</span>
       </button>
     </div>

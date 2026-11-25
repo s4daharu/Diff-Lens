@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ViewMode } from '../lib/types';
 import { MenuCheck, ToolbarMenu } from './ToolbarMenu';
+import { SyntaxLanguageDialog } from './SyntaxLanguageDialog';
+import { SYNTAX_LANGUAGES, type LangId, type SyntaxLanguage } from '../lib/syntaxLanguages';
 import {
   CloseIcon,
   CopyIcon,
@@ -30,6 +32,9 @@ interface DiffToolbarProps {
   onHideUnchangedLinesChange: (hidden: boolean) => void;
   lineNumbers: boolean;
   onLineNumbersChange: (show: boolean) => void;
+  syntaxLanguage: SyntaxLanguage;
+  detectedLanguage: LangId;
+  onSyntaxLanguageChange: (language: SyntaxLanguage) => void;
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
   narrow: boolean;
@@ -80,6 +85,9 @@ export function DiffToolbar({
   onHideUnchangedLinesChange,
   lineNumbers,
   onLineNumbersChange,
+  syntaxLanguage,
+  detectedLanguage,
+  onSyntaxLanguageChange,
   sidebarOpen,
   onToggleSidebar,
   narrow,
@@ -113,6 +121,7 @@ export function DiffToolbar({
   copiedMarkdown,
 }: DiffToolbarProps) {
   const [openMenu, setOpenMenu] = useState<'view' | 'filter' | 'export' | null>(null);
+  const [languageDialogOpen, setLanguageDialogOpen] = useState(false);
   const controls = useRef<HTMLDivElement>(null);
   const searchButton = useRef<HTMLButtonElement>(null);
   const searchInput = useRef<HTMLInputElement>(null);
@@ -206,12 +215,17 @@ export function DiffToolbar({
         <div className="diff-toolbar__group diff-toolbar__secondary">
           <ToolbarMenu name="View options" label="View" icon={<SlidersIcon size={14} />}
             open={openMenu === 'view'} onOpenChange={(open) => setOpenMenu(open ? 'view' : null)}>
-            {() => <>
+            {(close) => <>
               <MenuCheck checked={hideUnchangedLines} onToggle={() => onHideUnchangedLinesChange(!hideUnchangedLines)}>
                 Hide unchanged lines
               </MenuCheck>
               <MenuCheck checked={wrap} onToggle={() => onWrapChange(!wrap)}>Wrap long lines</MenuCheck>
               <MenuCheck checked={lineNumbers} onToggle={() => onLineNumbersChange(!lineNumbers)}>Line numbers</MenuCheck>
+              <button type="button" className="dropdown-item" role="menuitem" tabIndex={-1}
+                aria-haspopup="dialog" onClick={() => { close(); setLanguageDialogOpen(true); }}>
+                Language: {syntaxLanguage === 'auto' ? `Auto (${SYNTAX_LANGUAGES[detectedLanguage]})`
+                  : SYNTAX_LANGUAGES[syntaxLanguage]}
+              </button>
             </>}
           </ToolbarMenu>
 
@@ -393,6 +407,15 @@ export function DiffToolbar({
           </>}
         </ToolbarMenu>
       </div>
+
+      {languageDialogOpen && (
+        <SyntaxLanguageDialog detected={detectedLanguage} value={syntaxLanguage}
+          onClose={() => setLanguageDialogOpen(false)}
+          onApply={(value) => {
+            onSyntaxLanguageChange(value);
+            setLanguageDialogOpen(false);
+          }} />
+      )}
 
       {activeFilters.length > 0 && (
         <div className="active-text-filters" role="group" aria-label="Active comparison filters">

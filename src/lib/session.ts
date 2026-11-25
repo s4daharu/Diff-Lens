@@ -8,6 +8,7 @@ import {
   MAX_IGNORE_RULES,
   validateIgnoreRule,
 } from './ignoreRules';
+import { normalizeSyntaxLanguage, type SyntaxLanguage } from './syntaxLanguages';
 
 export const SESSION_FORMAT = 'difflens-session';
 export const SESSION_VERSION = 1;
@@ -34,6 +35,7 @@ export interface ComparisonSession {
     wrap: boolean;
     lineNumbers: boolean;
     syntaxEnabled: boolean;
+    syntaxLanguage?: SyntaxLanguage;
   };
 }
 
@@ -50,6 +52,7 @@ export interface CreateComparisonSessionInput {
   wrap: boolean;
   lineNumbers: boolean;
   syntaxEnabled: boolean;
+  syntaxLanguage?: SyntaxLanguage;
 }
 
 function record(value: unknown, label: string): Record<string, unknown> {
@@ -184,6 +187,7 @@ export function createComparisonSession(
       wrap: input.wrap,
       lineNumbers: input.lineNumbers,
       syntaxEnabled: input.syntaxEnabled,
+      syntaxLanguage: normalizeSyntaxLanguage(input.syntaxLanguage),
     },
   };
 }
@@ -250,6 +254,7 @@ export function parseComparisonSession(serialized: string): ComparisonSession {
       wrap: preferences.wrap,
       lineNumbers: preferences.lineNumbers,
       syntaxEnabled: preferences.syntaxEnabled,
+      syntaxLanguage: normalizeSyntaxLanguage(preferences.syntaxLanguage),
     },
   };
 }

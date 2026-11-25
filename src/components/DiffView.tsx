@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useRef, useState, useEffect, type RefObject } from 'react';
+import { memo, useCallback, useMemo, useRef, useState, useEffect, useLayoutEffect, useSyncExternalStore, type RefObject } from 'react';
 import type { ThemedToken } from 'shiki';
 import type { DiffRow, Span, ViewMode } from '../lib/types';
 import type { ChangeSection } from '../lib/changeSections';
@@ -45,52 +45,86 @@ const VIRTUALIZE_THRESHOLD = 800;
 const VIRTUAL_OVERSCAN_PX = 700;
 const BASE_ROW_HEIGHT = 21;
 const GAP_ROW_HEIGHT = 34;
+const GAP_REVEAL_STEP = 10;
 const EMPTY_HEIGHTS: ReadonlyMap<number, number> = new Map();
+const TOUCH_CONTROLS_QUERY = '(max-width: 900px), (pointer: coarse)';
+
+function subscribeToTouchControls(callback: () => void) {
+  const query = window.matchMedia(TOUCH_CONTROLS_QUERY);
+  query.addEventListener('change', callback);
+  return () => query.removeEventListener('change', callback);
+}
+
+function useTouchControls() {
+  return useSyncExternalStore(subscribeToTouchControls, () => window.matchMedia(TOUCH_CONTROLS_QUERY).matches);
+}
+
+function hasDirectionalGapControls(skipped: number | undefined) {
+  return skipped != null && skipped > 2 * GAP_REVEAL_STEP;
+}
 
 function estimateDiffRowHeight(
   row: DiffRow,
   wrap: boolean,
   charsPerLine: number,
+  touchControls: boolean,
+  hasMergeActions: boolean,
 ): number {
-  if (row.kind === 'gap') return GAP_ROW_HEIGHT;
-  if (!wrap) return BASE_ROW_HEIGHT;
+  if (row.kind === 'gap') {
+    if (!touchControls) return GAP_ROW_HEIGHT;
+    return hasDirectionalGapControls(row.skipped) ? 74 : 54;
+  }
+  const mergeHeight = hasMergeActions ? (touchControls ? 51 : 3) : 0;
+  if (!wrap) return BASE_ROW_HEIGHT + mergeHeight;
 
   const longest = Math.max(row.oldLine?.length ?? 0, row.newLine?.length ?? 0);
   const visualLines = Math.max(
     1,
-    Math.min(24, Math.ceil((longest + 8) / Math.max(20, charsPerLine))),
+    Math.min(24, Math.ceil((longest + 4) / charsPerLine)),
   );
-  return visualLines * BASE_ROW_HEIGHT;
+  return visualLines * BASE_ROW_HEIGHT + mergeHeight;
 }
 
 function useVirtualWindow<T>(
   items: T[],
   scrollRef: RefObject<HTMLDivElement | null>,
-  estimateHeight: (item: T) => number,
+  estimateHeight: (item: T, index: number) => number,
 ) {
   const virtualized = items.length > VIRTUALIZE_THRESHOLD;
   const measurementsRef = useRef(new Map<number, number>());
   const previousItemsRef = useRef(items);
+  const previousEstimateRef = useRef(estimateHeight);
   const widthRef = useRef(0);
   const refreshFrameRef = useRef<number | null>(null);
+  const jumpAnchorRef = useRef<{ items: T[]; index: number; scroller: HTMLDivElement; top: number } | null>(null);
+  const jumpTimerRef = useRef<number | undefined>(undefined);
   const [measurement, setMeasurement] = useState<{
     items: T[];
+    estimate: typeof estimateHeight;
     heights: ReadonlyMap<number, number>;
   } | null>(null);
   const [viewport, setViewport] = useState({ top: 0, height: 0 });
+  const clearJumpAnchor = useCallback(() => {
+    jumpAnchorRef.current?.scroller.removeAttribute('data-virtual-jump');
+    jumpAnchorRef.current = null;
+    window.clearTimeout(jumpTimerRef.current);
+    jumpTimerRef.current = undefined;
+  }, []);
 
-  if (previousItemsRef.current !== items) {
+  if (previousItemsRef.current !== items || previousEstimateRef.current !== estimateHeight) {
     previousItemsRef.current = items;
+    previousEstimateRef.current = estimateHeight;
     measurementsRef.current.clear();
   }
 
-  const heights = measurement?.items === items ? measurement.heights : EMPTY_HEIGHTS;
+  const heights = measurement?.items === items && measurement.estimate === estimateHeight
+    ? measurement.heights : EMPTY_HEIGHTS;
   const offsets = useMemo(
     () =>
       buildVirtualOffsets(
         items.length,
         heights,
-        (index) => estimateHeight(items[index]),
+        (index) => estimateHeight(items[index], index),
       ),
     [items, estimateHeight, heights],
   );
@@ -99,7 +133,10 @@ function useVirtualWindow<T>(
     if (refreshFrameRef.current != null) return;
     refreshFrameRef.current = window.requestAnimationFrame(() => {
       refreshFrameRef.current = null;
-      setMeasurement({ items: previousItemsRef.current, heights: new Map(measurementsRef.current) });
+      setMeasurement({
+        items: previousItemsRef.current, estimate: previousEstimateRef.current,
+        heights: new Map(measurementsRef.current),
+      });
     });
   }, []);
 
@@ -139,15 +176,23 @@ function useVirtualWindow<T>(
 
     updateViewport();
     scroller.addEventListener('scroll', updateViewport, { passive: true });
+    scroller.addEventListener('wheel', clearJumpAnchor, { passive: true });
+    scroller.addEventListener('pointerdown', clearJumpAnchor);
+    scroller.addEventListener('keydown', clearJumpAnchor);
     const resizeObserver = new ResizeObserver(updateViewport);
     resizeObserver.observe(scroller);
 
     return () => {
       window.cancelAnimationFrame(frame);
       scroller.removeEventListener('scroll', updateViewport);
+      scroller.removeEventListener('wheel', clearJumpAnchor);
+      scroller.removeEventListener('pointerdown', clearJumpAnchor);
+      scroller.removeEventListener('keydown', clearJumpAnchor);
       resizeObserver.disconnect();
     };
-  }, [scrollRef, items.length]);
+  }, [scrollRef, items.length, clearJumpAnchor]);
+
+  useEffect(() => clearJumpAnchor, [clearJumpAnchor]);
 
   const range = useMemo(() => {
     if (!virtualized) {
@@ -182,7 +227,7 @@ function useVirtualWindow<T>(
     [scheduleMeasurementRefresh, virtualized],
   );
 
-  const scrollToIndex = useCallback(
+  const scrollToMeasuredIndex = useCallback(
     (index: number, behavior: ScrollBehavior = 'smooth') => {
       const scroller = scrollRef.current;
       const count = items.length;
@@ -204,14 +249,47 @@ function useVirtualWindow<T>(
         behavior: effectiveBehavior,
       });
       if (virtualized) {
+        const actualTop = scroller.scrollTop;
+        const anchor = jumpAnchorRef.current;
+        if (anchor) anchor.top = actualTop;
         setViewport({
-          top: targetTop,
+          top: actualTop,
           height: scroller.clientHeight,
         });
       }
     },
     [items.length, offsets, scrollRef, virtualized],
   );
+
+  useLayoutEffect(() => {
+    const anchor = jumpAnchorRef.current;
+    if (!anchor) return;
+    if (!virtualized || anchor.items !== items) {
+      clearJumpAnchor();
+      return;
+    }
+    const { scroller, top } = anchor;
+    const clampedTop = Math.min(top, Math.max(0, scroller.scrollHeight - scroller.clientHeight));
+    if (Math.abs(scroller.scrollTop - clampedTop) > 1) {
+      // A new scroll took over (e.g. keyboard, scrollbar, or browser find).
+      clearJumpAnchor();
+      return;
+    }
+    scrollToMeasuredIndex(anchor.index, 'auto');
+  }, [clearJumpAnchor, items, scrollToMeasuredIndex, virtualized]);
+
+  const scrollToIndex = useCallback((index: number, behavior?: ScrollBehavior) => {
+    clearJumpAnchor();
+    const scroller = scrollRef.current;
+    if (virtualized && scroller) {
+      // Mounted rows can correct the estimates after a jump. Keep its target
+      // in view until those measurements have settled or the user scrolls.
+      scroller.setAttribute('data-virtual-jump', '');
+      jumpAnchorRef.current = { items, index, scroller, top: scroller.scrollTop };
+      jumpTimerRef.current = window.setTimeout(clearJumpAnchor, 250);
+    }
+    scrollToMeasuredIndex(index, behavior);
+  }, [clearJumpAnchor, items, scrollRef, scrollToMeasuredIndex, virtualized]);
 
   return {
     virtualized,
@@ -294,6 +372,44 @@ function focusDiffRow(id: string): () => void {
   };
 }
 
+interface LineRun {
+  text: string;
+  color?: string;
+  className?: string;
+}
+
+function buildLineRuns(line: string, spans?: Span[], tokens?: ThemedToken[] | null): LineRun[] {
+  if (!spans?.length) return tokens?.length
+    ? tokens.map(({ content, color }) => ({ text: content, color }))
+    : [{ text: line }];
+  const runs: LineRun[] = [];
+  let tokenIndex = 0;
+  let tokenOffset = 0;
+  for (const span of spans) {
+    const className = span.added ? 'hl hl--add' : span.removed ? 'hl hl--del' : undefined;
+    let start = 0;
+    while (start < span.text.length) {
+      const token = tokens?.[tokenIndex];
+      if (!token) {
+        runs.push({ text: span.text.slice(start), className });
+        break;
+      }
+      const size = Math.min(span.text.length - start, token.content.length - tokenOffset);
+      if (size > 0) {
+        // Keep the strong diff foreground on changed characters for contrast.
+        runs.push({ text: span.text.slice(start, start + size), color: className ? undefined : token.color, className });
+      }
+      start += size;
+      tokenOffset += size;
+      if (tokenOffset === token.content.length) {
+        tokenIndex++;
+        tokenOffset = 0;
+      }
+    }
+  }
+  return runs;
+}
+
 function LineText({
   line,
   spans,
@@ -307,11 +423,7 @@ function LineText({
   search?: LineSearch | null;
   activeMatch?: SearchRange;
 }) {
-  const runs: { text: string; color?: string; className?: string }[] =
-    spans?.length ? spans.map(({text, added, removed}) => ({
-      text, className: added ? 'hl hl--add' : removed ? 'hl hl--del' : undefined,
-    })) : tokens?.length ? tokens.map(({ content, color }) => ({ text: content, color }))
-      : [{ text: line }];
+  const runs = buildLineRuns(line, spans, tokens);
   const matches = search?.(line);
   let match = matches?.next().value as SearchRange | undefined;
   let offset = 0;
@@ -352,7 +464,7 @@ function RowMergeSlot({
   disabled?: boolean;
 }) {
   return (
-    <div className="diff-merge-slot">
+    <div className="diff-merge-slot" data-has-actions={section && onMerge ? true : undefined}>
       {section && onMerge && <MergeButtons entry={section} onMerge={onMerge} compact disabled={disabled} />}
     </div>
   );
@@ -439,7 +551,7 @@ const RowSide = memo(function RowSide({
       {lineNumbers && <span className="ln">{num}</span>}
       <span className="cell group-cell">
         <span className="cell__text">
-          <LineText line={line} spans={spans} tokens={!spans ? getTokens?.(line) : null}
+          <LineText line={line} spans={spans} tokens={getTokens?.(line)}
             search={search} activeMatch={activeMatch} />
         </span>
         <button
@@ -467,68 +579,43 @@ function GapRow({
   rowRef?: (node: HTMLDivElement | null) => void;
   id?: string;
 }) {
-  const hasRange = row.gapStartRow != null && row.gapEndRow != null;
-  const skipped =
-    row.skipped ??
-    (hasRange ? row.gapEndRow! - row.gapStartRow! + 1 : undefined);
+  const { gapStartRow: start, gapEndRow: end } = row;
+  const skipped = start != null && end != null ? end - start + 1 : row.skipped;
+  const directional = hasDirectionalGapControls(skipped);
+  const countLabel = skipped === 1 ? '1 line' : `${skipped?.toLocaleString() ?? ''} lines`.trim();
+  const canExpand = start != null && end != null && onExpandGap != null;
+  const expand = (from: number, to: number, event: React.MouseEvent<HTMLButtonElement>) => {
+    // A focused button can disappear after expanding. Keep keyboard users in the diff.
+    if (event.detail === 0) event.currentTarget.closest<HTMLElement>('.diff-scroll')?.focus({ preventScroll: true });
+    onExpandGap?.(from, to, to - from + 1);
+  };
 
   return (
-    <div ref={rowRef} id={id} className="diff-row diff-row--gap" role="row">
+    <div ref={rowRef} id={id} className="diff-row diff-row--gap">
       <div className="gap-content">
-        {hasRange && onExpandGap && (
-          <button
-            type="button"
-            className="gap-btn"
-            title="Expand 10 lines above"
-            onClick={() =>
-              onExpandGap(
-                row.gapStartRow!,
-                Math.min(row.gapEndRow!, row.gapStartRow! + 9),
-                10,
-              )
-            }
-          >
-            <ExpandUpIcon size={13} />
-            <span>+10 above</span>
-          </button>
-        )}
-        <span className="gap-label">
-          <span className="gap-dots">…</span>
-          {skipped != null ? ` ${skipped} lines hidden ` : ' lines hidden '}
-          <span className="gap-dots">…</span>
-        </span>
-        {hasRange && onExpandGap && (
+        {(!canExpand || directional) && <span className="gap-label">{countLabel} hidden</span>}
+        {canExpand && (
           <>
+            {directional && (
+              <button type="button" className="gap-btn"
+                onClick={(event) => expand(start, start + GAP_REVEAL_STEP - 1, event)}>
+                <ExpandDownIcon size={13} /> Show first {GAP_REVEAL_STEP}
+              </button>
+            )}
             <button
               type="button"
               className="gap-btn gap-btn--all"
-              title={`Expand all ${skipped ?? ''} hidden lines`}
-              onClick={() =>
-                onExpandGap(
-                  row.gapStartRow!,
-                  row.gapEndRow!,
-                  skipped ?? row.gapEndRow! - row.gapStartRow! + 1,
-                )
-              }
+              title={`Reveal ${countLabel} of unchanged context`}
+              onClick={(event) => expand(start, end, event)}
             >
-              <ExpandAllIcon size={13} />
-              <span>Expand all</span>
+              <ExpandAllIcon size={13} /> {directional ? 'Reveal all' : `Reveal ${countLabel}`}
             </button>
-            <button
-              type="button"
-              className="gap-btn"
-              title="Expand 10 lines below"
-              onClick={() =>
-                onExpandGap(
-                  Math.max(row.gapStartRow!, row.gapEndRow! - 9),
-                  row.gapEndRow!,
-                  10,
-                )
-              }
-            >
-              <ExpandDownIcon size={13} />
-              <span>+10 below</span>
-            </button>
+            {directional && (
+              <button type="button" className="gap-btn"
+                onClick={(event) => expand(end - GAP_REVEAL_STEP + 1, end, event)}>
+                <ExpandUpIcon size={13} /> Show last {GAP_REVEAL_STEP}
+              </button>
+            )}
           </>
         )}
       </div>
@@ -733,9 +820,13 @@ function SideBySide({
   getTokens,
 }: DiffViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const touchControls = useTouchControls();
+  const hasMerge = Boolean(onMergeSection);
   const estimateHeight = useCallback(
-    (row: DiffRow) => estimateDiffRowHeight(row, wrap, 90),
-    [wrap],
+    (row: DiffRow, index: number) => estimateDiffRowHeight(
+      row, wrap, touchControls ? 18 : 90, touchControls, hasMerge && !!sectionsAtStart?.has(index),
+    ),
+    [wrap, touchControls, hasMerge, sectionsAtStart],
   );
   const virtual = useVirtualWindow(rows, scrollRef, estimateHeight);
   const { scrollToIndex } = virtual;
@@ -895,6 +986,8 @@ function InlineView({
   getTokens,
 }: DiffViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const touchControls = useTouchControls();
+  const hasMerge = Boolean(onMergeSection);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
 
   const expandedRows = useMemo<InlineRenderRow[]>(() => {
@@ -934,8 +1027,11 @@ function InlineView({
   }, [rows, search]);
 
   const estimateHeight = useCallback(
-    (item: InlineRenderRow) => estimateDiffRowHeight(item.row, wrap, 140),
-    [wrap],
+    (item: InlineRenderRow) => estimateDiffRowHeight(
+      item.row, wrap, touchControls ? 22 : 140, touchControls,
+      hasMerge && item.subIndex === 0 && !!sectionsAtStart?.has(item.parentRowIndex),
+    ),
+    [wrap, touchControls, hasMerge, sectionsAtStart],
   );
   const virtual = useVirtualWindow(expandedRows, scrollRef, estimateHeight);
   const { scrollToIndex } = virtual;
@@ -1109,7 +1205,7 @@ function InlineView({
                 <span className="cell group-cell">
                   <span className="cell__text">
                     <LineText line={line ?? ''} spans={spans}
-                      tokens={!spans && line != null ? getTokens?.(line) : null}
+                       tokens={line != null ? getTokens?.(line) : null}
                       search={search} activeMatch={searchTarget?.visibleIndex === parentRowIndex
                         && searchTarget.side === side ? searchTarget : undefined} />
                   </span>

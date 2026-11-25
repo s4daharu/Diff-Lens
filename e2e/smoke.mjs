@@ -524,7 +524,7 @@ check('ArrowDown moves focus from the View trigger to the first item',
   await viewMenu.getByRole('menuitemcheckbox').first().evaluate(el => document.activeElement === el));
 await page.keyboard.press('End');
 check('End moves focus to the last View setting',
-  await viewMenu.getByRole('menuitemcheckbox').last().evaluate(el => document.activeElement === el));
+  await viewMenu.getByRole('menuitem', { name: /^Language:/ }).evaluate(el => document.activeElement === el));
 await page.keyboard.press('Escape');
 check('Escape closes the View menu and restores focus',
   await viewTrigger.evaluate(el => document.activeElement === el) && !(await viewMenu.isVisible()));
@@ -1636,8 +1636,69 @@ check('a delayed source load cannot overwrite newer typing',
   (await rawChanged.inputValue()) === 'Newer text input');
 await rawTextPage.close();
 
+const abapPage = await browser.newPage();
+await abapPage.goto(`http://localhost:${PORT}/`);
+for (const [side, action] of [['left', 'before'], ['right', 'after']]) {
+  await abapPage.locator(`.input-panel--${side} input[type=file]`).setInputFiles({
+    name: `${action}.abap`, mimeType: 'text/plain',
+    buffer: Buffer.from(`REPORT z_diff.\nDATA lv_text TYPE string.\nWRITE '${action}'.\n`),
+  });
+}
+await abapPage.getByRole('button', { name: 'Compare', exact: true }).click();
+await abapPage.waitForFunction(() => {
+  const tokens = [...document.querySelectorAll('.diff-row--equal .cell__text span[style]')];
+  const keyword = tokens.find(el => el.textContent === 'DATA');
+  const variable = tokens.find(el => el.textContent?.includes('lv_text'));
+  return keyword && variable && getComputedStyle(keyword).color !== getComputedStyle(variable).color;
+});
+check('uploaded ABAP sources show syntax colors alongside the diff',
+  (await abapPage.locator('.diff-row--modified').count()) === 1);
+check('unchanged tokens on modified lines keep their syntax colors',
+  (await abapPage.locator('.diff-row--modified .cell__text span[style]').filter({ hasText: /^WRITE$/ }).count()) === 2);
+const abapView = abapPage.getByRole('button', { name: 'View options' });
+const languageMenuItem = abapPage.getByRole('menuitem', { name: /^Language:/ });
+const languageDialog = abapPage.getByRole('dialog', { name: 'Syntax language' });
+const languageSelect = languageDialog.getByRole('combobox', { name: 'Language' });
+const chooseLanguage = async (value) => {
+  await abapView.click();
+  await languageMenuItem.click();
+  await languageSelect.selectOption(value);
+  await languageDialog.getByRole('button', { name: 'Apply language' }).click();
+  await languageDialog.waitFor({ state: 'hidden' });
+};
+await abapView.click();
+check('the View menu exposes the detected ABAP language',
+  (await languageMenuItem.textContent())?.trim() === 'Language: Auto (ABAP)');
+await abapPage.keyboard.press('Escape');
+await chooseLanguage('text');
+check('Plain text turns off syntax colors without changing the diff',
+  (await abapPage.locator('.diff-view .cell__text span[style*="color"]').count()) === 0 &&
+  (await abapPage.locator('.diff-row--modified').count()) === 1);
+await chooseLanguage('abap');
+await abapPage.getByRole('button', { name: 'Save comparison locally' }).click();
+const abapSaved = abapPage.getByRole('dialog', { name: 'Saved comparisons' });
+await abapSaved.getByLabel('New comparison name').fill('ABAP override');
+await abapSaved.getByRole('button', { name: 'Save as new comparison' }).click();
+await abapSaved.waitFor({ state: 'hidden' });
+await chooseLanguage('json');
+await abapPage.getByRole('button', { name: 'Saved comparisons' }).click();
+await abapSaved.getByRole('button', { name: 'Open ABAP override' }).click();
+await discard(abapPage).click();
+await abapSaved.waitFor({ state: 'hidden' });
+await abapView.click();
+check('reopening a saved comparison restores its manual language choice',
+  (await languageMenuItem.textContent())?.trim() === 'Language: ABAP');
+await abapPage.keyboard.press('Escape');
+const languageExport = abapPage.waitForEvent('download');
+await abapPage.getByRole('button', { name: 'Export options' }).click();
+await abapPage.getByRole('menuitem', { name: 'Export comparison session' }).click();
+await abapPage.getByRole('button', { name: 'Download session' }).click();
+const exportedLanguageSession = JSON.parse(readFileSync(await (await languageExport).path(), 'utf8'));
+check('session export includes the manual language override', exportedLanguageSession.preferences.syntaxLanguage === 'abap');
+await abapPage.close();
+
 // Check the narrow layout, text entry and a search hit inside hidden context.
-const mobile = await browser.newPage({ viewport: { width: 390, height: 844 } });
+const mobile = await browser.newPage({ viewport: { width: 320, height: 844 }, hasTouch: true });
 await mobile.goto(`http://localhost:${PORT}/`);
 check('Compare is reachable without scrolling on a narrow screen',
   await mobile.getByRole('button', { name: 'Compare', exact: true }).evaluate(el => {
@@ -1646,11 +1707,14 @@ check('Compare is reachable without scrolling on a narrow screen',
   }));
 const mobileOriginal = mobile.getByRole('textbox', { name: 'Original text' });
 const mobileChanged = mobile.getByRole('textbox', { name: 'Changed text' });
-await mobileOriginal.fill('text before\nhidden needle\nanchor\noriginal change');
-await mobileChanged.fill('text before\nhidden needle\nanchor\n');
+const mobileContext = Array.from({ length: 40 }, (_, i) => i === 27 ? 'hidden needle' : `context ${i}`).join('\n');
+await mobileOriginal.fill(`${mobileContext}\noriginal change\ntrailing context`);
+await mobileChanged.fill(`${mobileContext}\n`);
 await mobileChanged.pressSequentially('revised change');
+await mobileChanged.press('Enter');
+await mobileChanged.pressSequentially('trailing context');
 check('narrow text entry remains open after both sources have text',
-  (await mobileChanged.inputValue()).endsWith('revised change') &&
+  (await mobileChanged.inputValue()).endsWith('revised change\ntrailing context') &&
     !(await mobile.locator('.diff-view').isVisible()));
 await mobile.getByRole('button', { name: 'Compare', exact: true }).click();
 await mobile.locator('.diff-view').waitFor();
@@ -1675,7 +1739,24 @@ check('the narrow editor switches between one source at a time',
 await mobileDock.getByRole('button', { name: 'Done' }).click();
 await mobile.getByRole('button', { name: 'View options' }).click();
 await mobile.getByRole('menuitemcheckbox', { name: 'Hide unchanged lines' }).click();
-await mobile.locator('.diff-row--gap').waitFor();
+const tinyGap = mobile.locator('.diff-row--gap').filter({ hasText: 'Reveal 1 line' });
+await tinyGap.waitFor();
+check('a one-line gap has only one appropriately labeled 44px action',
+  (await tinyGap.getByRole('button').count()) === 1 &&
+  (await tinyGap.getByRole('button', { name: 'Reveal 1 line', exact: true }).boundingBox()).height >= 44);
+const longGap = mobile.locator('.diff-row--gap').filter({ hasText: '40 lines hidden' });
+check('large gaps offer first, last, and all reveal actions',
+  (await longGap.getByRole('button').allTextContents()).map(text => text.trim()).join('|') ===
+    'Show first 10|Reveal all|Show last 10');
+check('gap controls fit the diff without horizontal overflow at 320px',
+  await mobile.locator('.diff-scroll').evaluate(el => el.scrollWidth === el.clientWidth));
+const touchMerge = mobile.locator('.diff-merge-slot button');
+const firstTouchMerge = await touchMerge.first().boundingBox();
+const secondTouchMerge = await touchMerge.last().boundingBox();
+check('touch merge buttons show their directions and have large hit targets',
+  (await touchMerge.allInnerTexts()).join('|') === 'Changed → Original|Original → Changed' &&
+  firstTouchMerge.height >= 44 && secondTouchMerge.height >= 44 &&
+  firstTouchMerge.y === secondTouchMerge.y);
 await mobile.getByRole('button', { name: 'Find in diff', exact: true }).click();
 const mobileSearch = mobile.getByRole('textbox', { name: 'Search within diff' });
 await mobileSearch.fill('hidden needle');
@@ -1689,10 +1770,36 @@ check('search reveals only the matching hidden line while keeping other context 
 check('opening the search bar and jumping does not widen the narrow layout',
   await mobile.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
 await mobileSearch.press('Escape');
+await tinyGap.getByRole('button', { name: 'Reveal 1 line', exact: true }).press('Enter');
+await mobile.locator('.diff-row--equal').filter({ hasText: 'trailing context' }).waitFor();
+check('keyboard reveal keeps focus in the diff',
+  await mobile.locator('.diff-scroll').evaluate(el => document.activeElement === el));
 await mobile.getByRole('tab', { name: 'Side by side' }).click();
 await mobile.reload({ waitUntil: 'networkidle' });
 check('an explicit narrow-screen view choice survives reload',
   (await mobile.getByRole('tab', { name: 'Side by side' }).getAttribute('aria-selected')) === 'true');
+await startNewTextDiff(mobile);
+const touchSections = 900;
+const touchInput = (word) => Array.from({ length: touchSections }, (_, i) =>
+  `${word} value ${i + 1}\nunchanged anchor ${i + 1}`).join('\n');
+await mobileOriginal.fill(touchInput('original'));
+await mobileChanged.fill(touchInput('revised'));
+await mobile.getByRole('button', { name: 'Compare', exact: true }).click();
+await mobile.locator('.diff-view[data-virtualized="true"]').waitFor();
+await mobile.getByRole('button', { name: 'Previous change', exact: true }).click();
+await mobile.waitForFunction(() => {
+  const row = document.querySelector('.diff-row--active');
+  const scroller = document.querySelector('.diff-scroll');
+  if (!row?.textContent.includes('revised value 900') || !scroller) return false;
+  const bounds = row.getBoundingClientRect();
+  const viewport = scroller.getBoundingClientRect();
+  return bounds.top < viewport.bottom && bounds.bottom > viewport.top;
+});
+// Access the measured window, not just the first render using estimates.
+await mobile.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+check('touch change navigation reaches an off-screen action strip in a virtualized diff',
+  (await mobile.locator('.diff-row--active').filter({ hasText: 'revised value 900' })
+    .locator('.diff-merge-slot button').count()) === 2);
 await mobile.close();
 
 check('no errors accumulated', errors.length === 0, errors.join(' | '));

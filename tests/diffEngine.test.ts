@@ -19,6 +19,8 @@ import { buildVirtualOffsets, findVirtualIndex, getVirtualRange } from '../src/l
 import { buildChangeSections } from '../src/lib/changeSections';
 import { createLineSearch, indexDiffMatches } from '../src/lib/diffSearch';
 import { applyEditorText, normalizeEditorText } from '../src/lib/textEditing';
+import { createLineTokenizer, detectLang, getHighlighter } from '../src/lib/highlighter';
+import { SYNTAX_LANGUAGES, type LangId } from '../src/lib/syntaxLanguages';
 import { mergeChangeSections } from '../src/lib/mergeSections';
 import {
   describeReportOptions,
@@ -75,6 +77,58 @@ console.log('--- basic modification ---');
   check('modified old/new content', modified[0].oldLine === 'b' && modified[0].newLine === 'B', modified[0]);
   check('old numbers sequential', r.rows.map((x) => x.oldNum).join(',') === '1,2,3,4,5');
   check('new numbers sequential', r.rows.map((x) => x.newNum).join(',') === '1,2,3,4,5');
+}
+
+console.log('--- ABAP syntax highlighting ---');
+{
+  check('ABAP filename detection handles abapGit suffixes and uppercase extensions',
+    detectLang(null, 'zcl_sample.clas.ABAP', '') === 'abap' &&
+    detectLang('zsample.abap', null, '') === 'abap');
+  check('distinct ABAP declarations are detected in pasted text',
+    detectLang(null, null, 'report z_sample.') === 'abap' &&
+    detectLang(null, null, 'DATA: lv_text TYPE string.') === 'abap' &&
+    detectLang(null, null, 'CLASS lcl_sample DEFINITION.') === 'abap');
+  check('normal prose and SQL are not misclassified as ABAP',
+    detectLang(null, null, 'Report your findings.') === 'text' &&
+    detectLang(null, null, 'SELECT name FROM people;') === 'sql');
+  const statement = `dAtA lv_text TYPE string VALUE 'Hello ''ABAP'''. " comment`;
+  const highlighter = await getHighlighter();
+  check('starting the highlighter does not eagerly load language grammars', highlighter.getLoadedLanguages().length === 0);
+  for (const theme of ['light', 'dark'] as const) {
+    const tokenizer = await createLineTokenizer('abap', theme);
+    const tokens = tokenizer.getTokens(statement) ?? [];
+    const keyword = tokens.find(({ content }) => content === 'dAtA');
+    const literal = tokens.find(({ content }) => content === "'Hello ''ABAP'''");
+    const comment = tokens.find(({ content }) => content === '" comment');
+    check(`ABAP highlights keywords, escaped strings, and inline comments in ${theme} mode`,
+      tokens.map(({ content }) => content).join('') === statement &&
+      [keyword, literal, comment].every(Boolean) &&
+      new Set([keyword?.color, literal?.color, comment?.color]).size === 3);
+    const template = tokenizer.getTokens('lv_text = |Item { 42 }|.');
+    check(`ABAP identifies column-one comments and template expressions in ${theme} mode`,
+      tokenizer.getTokens('* WRITE anything.')?.length === 1 &&
+      !!template?.some(({ content }) => content === '42'));
+  }
+  check('ABAP loads without fetching unrelated grammars',
+    highlighter.getLoadedLanguages().includes('abap') && !highlighter.getLoadedLanguages().includes('json'));
+  check('Auto detects ABAP in the changed source when the original is plain text',
+    detectLang(null, null, 'notes only', 'REPORT z_sample.') === 'abap');
+}
+
+console.log('--- available syntax languages ---');
+{
+  const specimens: Record<LangId, string> = {
+    abap: 'WRITE \'value\'.', bash: 'echo "$HOME"', css: 'a { color: red; }',
+    html: '<b>hello</b>', javascript: 'let value = 1;', json: '{"value": 1}',
+    markdown: '# Heading', python: 'print("hello")', sql: 'SELECT * FROM values;',
+    typescript: 'let value: number = 1;', text: 'Plain text',
+  };
+  for (const lang of Object.keys(SYNTAX_LANGUAGES) as LangId[]) {
+    const tokenizer = await createLineTokenizer(lang, 'light');
+    const tokens = tokenizer.getTokens(specimens[lang]);
+    check(`${SYNTAX_LANGUAGES[lang]} loads and preserves text`,
+      lang === 'text' ? tokens === null : tokens?.map(token => token.content).join('') === specimens[lang]);
+  }
 }
 
 console.log('--- raw text editing ---');
@@ -1010,6 +1064,7 @@ console.log('--- comparison sessions ---');
     wrap: true,
     lineNumbers: false,
     syntaxEnabled: false,
+    syntaxLanguage: 'abap',
   });
   const parsed = parseComparisonSession(serializeComparisonSession(session));
   check('session format is versioned', parsed.format === SESSION_FORMAT && parsed.version === 1);
@@ -1025,6 +1080,12 @@ console.log('--- comparison sessions ---');
     parsed.preferences.options,
   );
   check('session restores view preferences', parsed.preferences.viewMode === 'inline' && parsed.preferences.wrap && !parsed.preferences.lineNumbers && !parsed.preferences.syntaxEnabled, parsed.preferences);
+  check('session restores a syntax language override', parsed.preferences.syntaxLanguage === 'abap');
+  for (const syntaxLanguage of [undefined, 'future-language']) {
+    const legacy = { ...session, preferences: { ...session.preferences, syntaxLanguage } };
+    check('sessions without a supported language override fall back to automatic detection',
+      parseComparisonSession(JSON.stringify(legacy)).preferences.syntaxLanguage === 'auto');
+  }
   check('session filename is safe', sessionFileName(parsed.name) === 'api-migration-review.difflens.json', sessionFileName(parsed.name));
 
   let badVersion = false;

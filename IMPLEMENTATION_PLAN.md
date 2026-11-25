@@ -145,6 +145,9 @@ Acceptance:
   support keyboard navigation in result menus.
 - [x] Add a smaller, resizable dock with single-source editing, visible save
   status, unsaved-work confirmation, and direct source copy and download.
+- [x] Make collapsed context and merge controls touch-friendly on narrow screens.
+- [x] Add an automatic or manual syntax language selector, including ABAP and
+  Plain text, and persist overrides in saved and exported comparisons.
 
 ### Milestone 6 — Structured spreadsheet comparison
 

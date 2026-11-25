@@ -35,6 +35,7 @@ import {
   formatMarkdownPatch,
 } from './lib/diffEngine';
 import { sanitizeIgnoreRules } from './lib/ignoreRules';
+import { normalizeSyntaxLanguage, type SyntaxLanguage } from './lib/syntaxLanguages';
 import { createLineSearch, indexDiffMatches } from './lib/diffSearch';
 import {
   buildChangeSections,
@@ -98,6 +99,7 @@ interface TextDraft extends MergeSnapshot {
   savedId: string | null;
   savedRevision: string | null;
   sessionName: string | null;
+  syntaxLanguage?: SyntaxLanguage;
 }
 
 function loadDraft(): TextDraft {
@@ -140,6 +142,7 @@ function snapshotSession(session: ComparisonSession): SessionSnapshot {
     oldName: original.name, newName: changed.name,
     oldReady: original.ready, newReady: changed.ready,
     ...session.preferences,
+    syntaxLanguage: normalizeSyntaxLanguage(session.preferences.syntaxLanguage),
   };
 }
 
@@ -150,6 +153,7 @@ function equalSnapshots(a: SessionSnapshot, b: SessionSnapshot): boolean {
     a.oldReady === b.oldReady && a.newReady === b.newReady &&
     a.viewMode === b.viewMode && a.wrap === b.wrap &&
     a.lineNumbers === b.lineNumbers && a.syntaxEnabled === b.syntaxEnabled &&
+    a.syntaxLanguage === b.syntaxLanguage &&
     (a.options === b.options || JSON.stringify(a.options) === JSON.stringify(b.options))
   );
 }
@@ -276,6 +280,7 @@ export default function App() {
     true,
     (v) => v === true,
   );
+  const [syntaxLanguage, setSyntaxLanguage] = useState(() => normalizeSyntaxLanguage(draft.syntaxLanguage));
   const [tokenizer, setTokenizer] = useState<LineTokenizer | null>(null);
   const [fileNames, setFileNames] = useState(draft.names);
   const [sourceReady, setSourceReady] = useState(draft.ready);
@@ -325,7 +330,8 @@ export default function App() {
     ...comparisonInput,
     oldReady: sourceReady.old, newReady: sourceReady.new,
     viewMode: snapshotView, wrap: snapshotWrap, lineNumbers, syntaxEnabled,
-  }), [comparisonInput, sourceReady, snapshotView, snapshotWrap, lineNumbers, syntaxEnabled]);
+    syntaxLanguage,
+  }), [comparisonInput, sourceReady, snapshotView, snapshotWrap, lineNumbers, syntaxEnabled, syntaxLanguage]);
   const saveStatus: SaveStatus = activeSavedId && saving?.id === activeSavedId ? 'saving'
     : savedBaseline && equalSnapshots(savedBaseline, sessionSnapshot) ? 'saved'
     : activeSavedId && !savedBaseline && !savedLoadError ? 'checking' : 'unsaved';
@@ -430,10 +436,20 @@ export default function App() {
     }
   }, [options.context]);
 
-  const syntaxLang = useMemo(
-    () => detectLang(fileNames.old, fileNames.new, oldText || newText),
+  const detectedLanguage = useMemo(
+    () => detectLang(fileNames.old, fileNames.new, oldText, newText),
     [fileNames.old, fileNames.new, oldText, newText],
   );
+  const activeLanguage = syntaxEnabled ? syntaxLanguage : 'text';
+  const syntaxLang = activeLanguage === 'auto' ? detectedLanguage : activeLanguage;
+  const handleSyntaxLanguageChange = (language: SyntaxLanguage) => {
+    setSyntaxLanguage(language);
+    if (language !== 'text') setSyntaxEnabled(true);
+  };
+  const handleSyntaxToggle = (enabled: boolean) => {
+    if (enabled && syntaxLanguage === 'text') setSyntaxLanguage('auto');
+    setSyntaxEnabled(enabled);
+  };
 
   useEffect(() => {
     if (comparisonType !== 'text' || !syntaxEnabled) {
@@ -608,6 +624,7 @@ export default function App() {
         oldText, newText, names: fileNames, ready: sourceReady,
         compared: hasCompared, savedId: activeSavedId, sessionName,
         savedRevision: draftSavedRevision,
+        syntaxLanguage,
       };
       save(storageKeys.draft, next);
     };
@@ -617,7 +634,7 @@ export default function App() {
       window.clearTimeout(timer);
       window.removeEventListener('pagehide', persist);
     };
-  }, [oldText, newText, fileNames, sourceReady, hasCompared, activeSavedId, draftSavedRevision, sessionName]);
+  }, [oldText, newText, fileNames, sourceReady, hasCompared, activeSavedId, draftSavedRevision, sessionName, syntaxLanguage]);
 
   useEffect(() => {
     if (!savedOpen && !activeSavedId) return;
@@ -780,6 +797,7 @@ export default function App() {
     setHasCompared(false);
     setActiveSavedId(null);
     setOptions(DEFAULT_OPTIONS);
+    setSyntaxLanguage('auto');
     lastVisibleContextRef.current = DEFAULT_OPTIONS.context;
     setFileNames({ old: null, new: null });
     setSourceReady({ old: false, new: false });
@@ -809,6 +827,7 @@ export default function App() {
         setActiveSavedId(prevSavedId);
         setHasCompared(hasCompared);
         setOptions(prevOptions);
+        setSyntaxLanguage(syntaxLanguage);
         setToast('Restored');
         setToastUndo(null);
         window.clearTimeout(toastTimerRef.current);
@@ -832,6 +851,7 @@ export default function App() {
     activeSavedId,
     hasCompared,
     allowReplace,
+    syntaxLanguage,
   ]);
 
   const handleLoadSample = useCallback(async () => {
@@ -840,6 +860,7 @@ export default function App() {
     setOldText(SAMPLE_ORIGINAL);
     setNewText(SAMPLE_CHANGED);
     setFileNames({ old: null, new: null });
+    setSyntaxLanguage('auto');
     setSourceReady({ old: true, new: true });
     setHasCompared(true);
     setActiveSavedId(null);
@@ -858,6 +879,7 @@ export default function App() {
     setOldText(preset.oldText);
     setNewText(preset.newText);
     setFileNames({ old: preset.oldName, new: preset.newName });
+    setSyntaxLanguage('auto');
     setSourceReady({ old: true, new: true });
     setHasCompared(true);
     setActiveSavedId(null);
@@ -935,6 +957,7 @@ export default function App() {
       setWrap(preferences.wrap);
       setLineNumbers(preferences.lineNumbers);
       setSyntaxEnabled(preferences.syntaxEnabled);
+      setSyntaxLanguage(normalizeSyntaxLanguage(preferences.syntaxLanguage));
       lastVisibleContextRef.current = preferences.options.context === 0
         ? 'all'
         : preferences.options.context;
@@ -1262,8 +1285,9 @@ export default function App() {
   // DiffView virtualizes large result sets, so syntax highlighting can stay
   // lazy and only tokenize the rows that are actually mounted.
   const getTokens = useMemo(
-    () => (tokenizer ? (line: string) => tokenizer.getTokens(line) : null),
-    [tokenizer],
+    () => (tokenizer && syntaxLang !== 'text' && tokenizer.lang === syntaxLang
+      ? (line: string) => tokenizer.getTokens(line) : null),
+    [tokenizer, syntaxLang],
   );
 
   // Group contiguous changed rows into sections so navigation moves by hunk,
@@ -1508,7 +1532,8 @@ export default function App() {
           target.tagName === 'SELECT' ||
           target.isContentEditable);
 
-      if (e.defaultPrevented || savedOpen || sessionNameDialogOpen || replaceRequest || (narrow && sidebarOpen)) return;
+      if (e.defaultPrevented || target?.closest('dialog[open]') || savedOpen ||
+        sessionNameDialogOpen || replaceRequest || (narrow && sidebarOpen)) return;
       if (e.key === 'Escape' && searchOpen) {
         e.preventDefault();
         toggleSearch();
@@ -1691,8 +1716,8 @@ export default function App() {
       onSelectSection={(row) => jumpFromDetails(() => handleSelectChange(row))}
       options={options}
       onOptionsChange={setOptions}
-      syntaxEnabled={syntaxEnabled}
-      onSyntaxChange={setSyntaxEnabled}
+      syntaxEnabled={activeLanguage !== 'text'}
+      onSyntaxChange={handleSyntaxToggle}
       onClose={handleCloseSidebar}
     />
   );
@@ -1818,6 +1843,9 @@ export default function App() {
                 onHideUnchangedLinesChange={handleHideUnchangedLines}
                 lineNumbers={lineNumbers}
                 onLineNumbersChange={setLineNumbers}
+                syntaxLanguage={activeLanguage}
+                detectedLanguage={detectedLanguage}
+                onSyntaxLanguageChange={handleSyntaxLanguageChange}
                 sidebarOpen={sidebarOpen}
                 onToggleSidebar={() => sidebarOpen ? handleCloseSidebar() : setSidebarOpen(true)}
                 narrow={narrow}
