@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { CloseIcon, DownloadIcon } from './Icons';
+import { TextDialog } from './TextDialog';
 
 interface SessionNameModalProps {
   isOpen: boolean;
@@ -8,54 +9,18 @@ interface SessionNameModalProps {
   onSave: (name: string) => void;
 }
 
-export function SessionNameModal({
-  isOpen,
-  initialName,
-  onClose,
-  onSave,
-}: SessionNameModalProps) {
+export function SessionNameModal({ isOpen, initialName, onClose, onSave }: SessionNameModalProps) {
+  return isOpen ? <SessionNameForm initialName={initialName} onClose={onClose} onSave={onSave} /> : null;
+}
+
+function SessionNameForm({ initialName, onClose, onSave }: Omit<SessionNameModalProps, 'isOpen'>) {
   const [name, setName] = useState(initialName);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    setName(initialName);
-    const previousFocus = document.activeElement as HTMLElement | null;
-    inputRef.current?.focus();
-    inputRef.current?.select();
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        onClose();
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => {
-      window.removeEventListener('keydown', onKeyDown);
-      if (previousFocus?.isConnected) {
-        previousFocus.focus();
-      } else {
-        document
-          .querySelector<HTMLButtonElement>('[data-export-toggle="true"]')
-          ?.focus();
-      }
-    };
-  }, [initialName, isOpen, onClose]);
-
-  if (!isOpen) return null;
-
   const trimmed = name.trim();
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <TextDialog labelId="session-name-title" descriptionId="session-name-description"
+      className="text-confirm modal-card session-modal" onClose={onClose}>
       <form
-        className="modal-card session-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="session-name-title"
-        aria-describedby="session-name-description"
-        onClick={(event) => event.stopPropagation()}
         onSubmit={(event) => {
           event.preventDefault();
           if (trimmed) onSave(trimmed);
@@ -64,7 +29,7 @@ export function SessionNameModal({
         <header className="modal-header">
           <div className="modal-title">
             <DownloadIcon size={17} />
-            <h3 id="session-name-title">Save comparison session</h3>
+            <h3 id="session-name-title">Export comparison session</h3>
           </div>
           <button
             type="button"
@@ -80,7 +45,8 @@ export function SessionNameModal({
             Session name
           </label>
           <input
-            ref={inputRef}
+            data-dialog-focus
+            onFocus={(event) => event.currentTarget.select()}
             id="session-name-input"
             className="session-modal__input"
             type="text"
@@ -91,8 +57,8 @@ export function SessionNameModal({
             autoComplete="off"
           />
           <p id="session-name-description" className="session-modal__hint">
-            Saves both source texts, filenames, comparison options, and view
-            preferences to a local .difflens.json file. Nothing is uploaded.
+            Downloads both sources and your comparison settings as a portable
+            .difflens.json file. This does not add it to Saved comparisons.
           </p>
         </div>
         <footer className="modal-footer">
@@ -104,10 +70,10 @@ export function SessionNameModal({
             className="btn btn--primary"
             disabled={!trimmed}
           >
-            Save session
+            Download session
           </button>
         </footer>
       </form>
-    </div>
+    </TextDialog>
   );
 }

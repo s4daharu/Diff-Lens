@@ -79,6 +79,21 @@ const openViewOptions = async () => {
   }
   return page.getByRole('menu', { name: 'View options' });
 };
+const discard = (target = page) => target.getByRole('button', { name: 'Discard and continue' });
+const startNewTextDiff = async (target = page) => {
+  await target.getByRole('button', { name: 'New diff' }).click();
+  await target.locator('.main--landing:visible').or(discard(target)).first().waitFor();
+  if (await discard(target).isVisible()) await discard(target).click();
+  await target.locator('.main--landing').waitFor();
+};
+
+const setViewOption = async (name, enabled) => {
+  const menu = await openViewOptions();
+  const item = menu.getByRole('menuitemcheckbox', { name, exact: true });
+  if (((await item.getAttribute('aria-checked')) === 'true') !== enabled) await item.click();
+  await item.focus();
+  await page.keyboard.press('Escape');
+};
 
 const makeImageFixture = async (
   variant,
@@ -396,7 +411,7 @@ check('both uploads stay on the landing until Compare is pressed',
 await compareButton.click();
 await page.waitForSelector('.diff-view--side', { timeout: 5000 });
 check('viewer opens after explicit Compare', true);
-await page.getByRole('button', { name: 'New diff' }).click();
+await startNewTextDiff();
 await page.waitForSelector('.main--landing');
 
 await page.getByRole('button', { name: 'Try with sample text' }).click();
@@ -499,21 +514,33 @@ check(
 check(
   'line wrap is disabled by default',
   (await viewMenu
-    .getByRole('menuitemcheckbox', { name: 'Disable line wrap' })
-    .getAttribute('aria-checked')) === 'true',
+    .getByRole('menuitemcheckbox', { name: 'Wrap long lines' })
+    .getAttribute('aria-checked')) === 'false',
 );
-await viewMenu
-  .getByRole('menuitemcheckbox', { name: 'Hide whitespace changes' })
-  .click();
+const viewTrigger = page.getByRole('button', { name: 'View options' });
+await viewTrigger.focus();
+await page.keyboard.press('ArrowDown');
+check('ArrowDown moves focus from the View trigger to the first item',
+  await viewMenu.getByRole('menuitemcheckbox').first().evaluate(el => document.activeElement === el));
+await page.keyboard.press('End');
+check('End moves focus to the last View setting',
+  await viewMenu.getByRole('menuitemcheckbox').last().evaluate(el => document.activeElement === el));
+await page.keyboard.press('Escape');
+check('Escape closes the View menu and restores focus',
+  await viewTrigger.evaluate(el => document.activeElement === el) && !(await viewMenu.isVisible()));
+const filtersTrigger = page.getByRole('button', { name: 'Comparison filters', exact: true });
+await filtersTrigger.click();
+const whitespaceFilter = page.getByRole('menuitemcheckbox', { name: 'Ignore whitespace' });
+await whitespaceFilter.click();
 check(
-  'whitespace changes can be hidden',
-  (await viewMenu
-    .getByRole('menuitemcheckbox', { name: 'Hide whitespace changes' })
-    .getAttribute('aria-checked')) === 'true',
+  'comparison filters are separate and active filters are disclosed',
+  (await whitespaceFilter.getAttribute('aria-checked')) === 'true' &&
+    (await page.locator('.active-text-filters').innerText()).includes('Whitespace'),
 );
-await viewMenu
-  .getByRole('menuitemcheckbox', { name: 'Hide whitespace changes' })
-  .click();
+await whitespaceFilter.click();
+await page.getByRole('menuitem', { name: 'Advanced filters…' }).click();
+check('advanced filters reveal their settings directly',
+  (await page.locator('.sidebar-options').getAttribute('open')) !== null);
 
 const rows = await page
   .locator('.diff-row--modified, .diff-row--added, .diff-row--deleted')
@@ -555,7 +582,7 @@ await page.keyboard.press('Home');
 check('minimap Home returns to first mapped change', (await minimap.getAttribute('aria-valuenow')) === '1');
 
 // toggle inline view
-await page.getByRole('tab', { name: 'Inline' }).click();
+await page.getByRole('tab', { name: 'Unified' }).click();
 await page.waitForSelector('.diff-view--inline');
 const signCount = await page.locator('.sign--added, .sign--deleted').count();
 check('inline view shows signs', signCount > 0, `signs=${signCount}`);
@@ -587,6 +614,19 @@ await editSources();
 await page.waitForSelector('.source-editor');
 const ta = page.locator('.source-editor .input-panel--left textarea');
 const ta2 = page.locator('.source-editor .input-panel--right textarea');
+const dock = page.getByRole('region', { name: 'Edit sources' });
+const initialDockSize = (await dock.boundingBox()).height;
+check('desktop editor opens as a compact dock', initialDockSize < 230, `height=${initialDockSize}`);
+const dockHeight = dock.getByRole('slider', { name: 'Editor height' });
+await dockHeight.fill('220');
+check('the desktop dock can be resized', (await dock.boundingBox()).height > initialDockSize + 45);
+await dockHeight.fill('150');
+await dock.getByRole('button', { name: 'Changed', exact: true }).click();
+await ta2.evaluate(textarea => textarea.focus());
+check('single-source mode hides the other editor while keeping the diff visible',
+  !(await ta.isVisible()) && await ta2.isVisible() && await page.locator('.diff-view').isVisible());
+await dock.getByRole('button', { name: 'Both', exact: true }).click();
+await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Original text');
 check(
   'source editor initially focuses original text',
   await ta.evaluate((textarea) => document.activeElement === textarea),
@@ -626,7 +666,9 @@ await openSidebarOptions();
 await page.getByLabel('Ignore case').check();
 await page.waitForTimeout(800);
 const msg = await page.locator('.sidebar-identical-msg').textContent();
-check('ignore case → identical', !!msg && msg.includes('No differences'), msg);
+check('filtered equality is not labeled identical',
+  msg === 'No differences with current filters' &&
+    (await page.locator('.sources-bar__same').innerText()).includes('No differences with current filters'), msg);
 
 // swap from the sources bar
 await page.getByLabel('Swap texts').click();
@@ -735,28 +777,22 @@ const overflowBefore = await page.evaluate(() => {
   return s.scrollWidth - s.clientWidth;
 });
 check('no wrap: horizontal overflow present', overflowBefore > 200, `overflow=${overflowBefore}px`);
-{
-  const menu = await openViewOptions();
-  await menu
-    .getByRole('menuitemcheckbox', { name: 'Disable line wrap' })
-    .click();
-}
+await setViewOption('Wrap long lines', true);
 await page.waitForTimeout(900);
 const overflowAfter = await page.evaluate(() => {
   const s = document.querySelector('.diff-scroll');
   return s.scrollWidth - s.clientWidth;
 });
 check('wrap on: no horizontal overflow', overflowAfter < 100, `overflow=${overflowAfter}px`);
-{
-  const menu = await openViewOptions();
-  await menu
-    .getByRole('menuitemcheckbox', { name: 'Disable line wrap' })
-    .click();
-}
+await setViewOption('Wrap long lines', false);
 
 // new diff: clears panels but keeps theme preference
 const themeBeforeNew = await page.evaluate(() => document.documentElement.dataset.theme);
 await page.getByRole('button', { name: 'New diff' }).click();
+await discard().waitFor();
+await page.getByRole('button', { name: 'Keep editing' }).click();
+check('cancelling the unsaved prompt keeps the current comparison', await page.locator('.main--workspace').isVisible());
+await startNewTextDiff();
 await page.waitForTimeout(400);
 const cleared =
   (await page.locator('.input-panel--left textarea').inputValue()) === '' &&
@@ -919,7 +955,7 @@ const patchText = readFileSync(dl2Path, 'utf8');
 check('patch header uses uploaded name', patchText.includes('--- orig.txt'), patchText.split('\n')[0]);
 
 // interactive gap expansion
-await page.getByRole('button', { name: 'New diff' }).click();
+await startNewTextDiff();
 await page.getByRole('button', { name: 'Try with sample text' }).click();
 await page.waitForSelector('.diff-view--side', { timeout: 5000 });
 await openSidebarOptions();
@@ -953,7 +989,7 @@ const activeItem = await page.locator('.change-item--active').count();
 check('active section outline item highlighted', activeItem === 1);
 
 // diff search
-await page.getByRole('button', { name: 'Find' }).click();
+await page.getByRole('button', { name: 'Find in diff', exact: true }).click();
 await page.waitForSelector('.diff-search-input');
 await page.locator('.diff-search-input').fill('greet');
 await page.waitForTimeout(300);
@@ -963,7 +999,7 @@ await page.locator('.diff-search-clear').click();
 await page.getByRole('button', { name: 'Close search', exact: true }).click();
 
 // section merge actions, repeated recomputation, and undo/redo
-await page.getByRole('button', { name: 'New diff' }).click();
+await startNewTextDiff();
 await page.waitForSelector('.main--landing');
 const mergeOriginal =
   'old first\nkeep\nold one\nold two\nanchor\nold last';
@@ -1030,7 +1066,7 @@ await page.waitForSelector('.sidebar-identical-msg', { timeout: 5000 });
 check('three redo operations resolve the comparison again', true);
 
 // moved-block detection and navigation
-await page.getByRole('button', { name: 'New diff' }).click();
+await startNewTextDiff();
 await page.waitForSelector('.main--landing');
 const moveOld = [
   'header',
@@ -1167,6 +1203,7 @@ check(
 await page.getByRole('button', { name: 'Samples' }).click();
 await page.waitForSelector('.dropdown-menu');
 await page.getByRole('button', { name: /API Config/ }).click();
+await discard().click();
 await page.waitForTimeout(600);
 await editSources();
 const jsonVal = await ta.inputValue();
@@ -1194,20 +1231,13 @@ const modalClosed = !(await page.locator('.modal-card').isVisible());
 check('shortcuts modal closes on Escape', modalClosed);
 
 // named comparison session round-trip
-await page.getByRole('button', { name: 'New diff' }).click();
+await startNewTextDiff();
 await page.getByRole('button', { name: 'Samples' }).click();
 await page.getByRole('button', { name: /API Config/ }).click();
 await page.waitForSelector('.diff-view--side', { timeout: 5000 });
-await page.getByRole('tab', { name: 'Inline' }).click();
-{
-  const menu = await openViewOptions();
-  const noWrap = menu.getByRole('menuitemcheckbox', { name: 'Disable line wrap' });
-  if ((await noWrap.getAttribute('aria-checked')) === 'true') await noWrap.click();
-}
-const lineNumbersButton = page.getByRole('button', { name: 'Line numbers' });
-if ((await lineNumbersButton.getAttribute('aria-pressed')) === 'true') {
-  await lineNumbersButton.click();
-}
+await page.getByRole('tab', { name: 'Unified' }).click();
+await setViewOption('Wrap long lines', true);
+await setViewOption('Line numbers', false);
 await openSidebarOptions();
 await page.getByLabel('Context lines').selectOption('3');
 await page.getByLabel('Ignore line-ending style').check();
@@ -1219,9 +1249,17 @@ await page.getByLabel('Enable ignore rule 1').check();
 const sessionDownloadPromise = page.waitForEvent('download');
 await page.getByRole('button', { name: 'Export options' }).click();
 await page.getByRole('menuitem', { name: 'Export comparison session' }).click();
-const sessionDialog = page.getByRole('dialog', { name: 'Save comparison session' });
+const sessionDialog = page.getByRole('dialog', { name: 'Export comparison session' });
+check('session export takes keyboard focus to the session name',
+  await sessionDialog.getByLabel('Session name').evaluate(el => el === document.activeElement));
+await page.keyboard.press('Escape');
+await sessionDialog.waitFor({ state: 'hidden' });
+check('cancelling session export restores focus to Export',
+  await page.getByRole('button', { name: 'Export options' }).evaluate(el => el === document.activeElement));
+await page.getByRole('button', { name: 'Export options' }).click();
+await page.getByRole('menuitem', { name: 'Export comparison session' }).click();
 await sessionDialog.getByLabel('Session name').fill('API Review');
-await sessionDialog.getByRole('button', { name: 'Save session', exact: true }).click();
+await sessionDialog.getByRole('button', { name: 'Download session', exact: true }).click();
 const sessionDownload = await sessionDownloadPromise;
 check(
   'session export uses named .difflens.json file',
@@ -1245,18 +1283,12 @@ check(
 
 // Move the app to different preferences before importing, proving import restores them.
 await page.getByRole('tab', { name: 'Side by side' }).click();
-{
-  const menu = await openViewOptions();
-  const noWrap = menu.getByRole('menuitemcheckbox', { name: 'Disable line wrap' });
-  if ((await noWrap.getAttribute('aria-checked')) !== 'true') await noWrap.click();
-}
-if ((await lineNumbersButton.getAttribute('aria-pressed')) !== 'true') {
-  await lineNumbersButton.click();
-}
+await setViewOption('Wrap long lines', false);
+await setViewOption('Line numbers', true);
 await page.getByLabel('Context lines').selectOption('all');
 await page.getByLabel('Ignore line-ending style').uncheck();
 
-await page.getByRole('button', { name: 'New diff' }).click();
+await startNewTextDiff();
 const sessionChooserPromise = page.waitForEvent('filechooser');
 await page.getByRole('button', { name: 'Open comparison session' }).click();
 const sessionChooser = await sessionChooserPromise;
@@ -1287,8 +1319,8 @@ check(
   check(
     'session import restores line-wrap preference',
     (await menu
-      .getByRole('menuitemcheckbox', { name: 'Disable line wrap' })
-      .getAttribute('aria-checked')) === 'false',
+      .getByRole('menuitemcheckbox', { name: 'Wrap long lines' })
+      .getAttribute('aria-checked')) === 'true',
   );
 }
 await openSidebarOptions();
@@ -1386,14 +1418,17 @@ check(
 
 // On-device saved comparisons: create, autosave, reopen after reload, rename, save manually and delete.
 const savedButton = page.getByRole('button', { name: 'Saved comparisons' });
-await savedButton.click();
+const saveStatus = page.locator('.sources-save__status');
+check('unnamed work is visibly unsaved', (await saveStatus.innerText()) === 'Unsaved');
+await page.getByRole('button', { name: 'Save comparison locally' }).click();
 const savedDialog = page.getByRole('dialog', { name: 'Saved comparisons' });
 await savedDialog.getByLabel('New comparison name').fill('Local comparison');
 await savedDialog.getByLabel('Automatically save edits').check();
 await savedDialog.getByRole('button', { name: 'Save as new comparison' }).click();
 await savedDialog.waitFor({ state: 'hidden' });
 check('saved comparison has a workspace name without downloading',
-  (await page.locator('.sources-session-name').textContent())?.includes('Local comparison'));
+  (await page.locator('.sources-session-name').textContent())?.includes('Local comparison') &&
+  (await saveStatus.innerText()) === 'Saved locally');
 await editSources();
 await ta2.fill('Autorecovered changed text\n');
 await page.getByRole('button', { name: 'New diff' }).click();
@@ -1417,12 +1452,12 @@ await savedDialog.getByRole('button', { name: 'Close saved comparisons' }).click
 await editSources();
 await ta2.fill('Manually saved changed text\n');
 await closeEditor();
-await savedButton.click();
-await savedDialog.getByRole('button', { name: 'Save changes' }).click();
-await savedDialog.waitFor({ state: 'hidden' });
+check('edits to a manual save are visibly unsaved', (await saveStatus.innerText()) === 'Unsaved');
+await page.getByRole('button', { name: 'Save comparison locally' }).click();
+await page.locator('[data-save-status="saved"]').waitFor();
 await editSources();
 await ta2.fill('Unsaved edit');
-await page.getByRole('button', { name: 'New diff' }).click();
+await startNewTextDiff();
 await savedButton.click();
 await savedDialog.getByRole('button', { name: 'Open Renamed comparison' }).click();
 await editSources();
@@ -1446,6 +1481,9 @@ const otherTab = await context.newPage();
 await otherTab.goto(`http://localhost:${PORT}/`);
 await otherTab.getByRole('button', { name: 'Saved comparisons' }).click();
 await otherTab.getByRole('button', { name: 'Open Multi-tab comparison' }).click();
+await otherTab.waitForFunction(() =>
+  document.querySelector('.text-confirm[open]') || !document.querySelector('.saved-dialog[open]'));
+if (await discard(otherTab).isVisible()) await discard(otherTab).click();
 await otherTab.getByRole('button', { name: 'Edit sources' }).click();
 await otherTab.getByRole('textbox', { name: 'Changed text' }).fill('Newer change from another tab');
 await otherTab.getByRole('button', { name: 'New diff' }).click();
@@ -1459,6 +1497,7 @@ check('a conflicting autosave does not clear the working copy',
   (await ta2.inputValue()) === 'Working change in a stale tab');
 await savedButton.click();
 await savedDialog.getByRole('button', { name: 'Open Multi-tab comparison' }).click();
+await discard().click();
 await editSources();
 check('a stale tab cannot overwrite a newer saved comparison',
   (await ta2.inputValue()) === 'Newer change from another tab');
@@ -1499,9 +1538,112 @@ check('live editing cancels an obsolete active worker request',
   await workerPage.evaluate(() => window.__testObsoleteRequestCancelled === true));
 await workerPage.close();
 
+// A textarea round-trip must not silently rewrite file names or line endings.
+const rawTextPage = await context.newPage();
+await rawTextPage.goto(`http://localhost:${PORT}/`);
+await startNewTextDiff(rawTextPage);
+for (const [side, name] of [['left', 'before-crlf.txt'], ['right', 'after-crlf.txt']]) {
+  await rawTextPage.locator(`.input-panel--${side} input[type=file]`).setInputFiles({
+    name, mimeType: 'text/plain', buffer: Buffer.from('alpha\r\nbeta\r\ngamma\r\n'),
+  });
+}
+await rawTextPage.getByRole('button', { name: 'Compare', exact: true }).click();
+await rawTextPage.getByText('Texts are identical', { exact: true }).waitFor();
+await rawTextPage.getByRole('tab', { name: 'Side by side' }).click();
+await rawTextPage.getByRole('button', { name: 'Edit sources' }).click();
+const rawChanged = rawTextPage.getByRole('textbox', { name: 'Changed text' });
+await rawChanged.press('Control+Home');
+await rawChanged.press('End');
+await rawChanged.pressSequentially('!');
+await rawTextPage.locator('.diff-row--modified').first().waitFor();
+check('editing one CRLF line changes only that line and preserves the filename',
+  (await rawTextPage.locator('.diff-row--modified').count()) === 1 &&
+  (await rawTextPage.locator('.source-chip__name').allTextContents()).includes('after-crlf.txt'));
+await rawTextPage.getByRole('button', { name: 'Done' }).click();
+const cancelImportPromise = rawTextPage.waitForEvent('filechooser');
+await rawTextPage.getByRole('button', { name: 'Open comparison session' }).click();
+await (await cancelImportPromise).setFiles({
+  name: 'api-review.difflens.json',
+  mimeType: 'application/json',
+  buffer: Buffer.from(savedSessionText),
+});
+await rawTextPage.getByRole('dialog', { name: 'Open this comparison session?' }).waitFor();
+await rawTextPage.keyboard.press('Escape');
+await rawTextPage.getByRole('dialog', { name: 'Open this comparison session?' }).waitFor({ state: 'hidden' });
+check('cancelling a valid session import keeps unsaved work',
+  (await rawTextPage.locator('.source-chip__name').allTextContents()).includes('after-crlf.txt') &&
+    (await rawTextPage.locator('.diff-row--modified').count()) === 1);
+await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+await rawTextPage.getByRole('button', { name: 'Export options' }).click();
+await rawTextPage.getByRole('menuitem', { name: 'Copy Original text' }).click();
+await rawTextPage.locator('.toast').filter({ hasText: 'Copied Original text' }).waitFor();
+check('direct source copy does not require opening the editor',
+  (await rawTextPage.evaluate(() => navigator.clipboard.readText())).replace(/\r\n/g, '\n') === 'alpha\nbeta\ngamma\n');
+await rawTextPage.getByRole('button', { name: 'Export options' }).click();
+const changedDownloadPromise = rawTextPage.waitForEvent('download');
+await rawTextPage.getByRole('menuitem', { name: 'Download Changed text' }).click();
+const changedDownload = await changedDownloadPromise;
+check('direct source download retains the edited CRLF bytes and original filename',
+  changedDownload.suggestedFilename() === 'after-crlf.txt' &&
+    readFileSync(await changedDownload.path(), 'utf8') === 'alpha!\r\nbeta\r\ngamma\r\n');
+
+// File reads are asynchronous. Verify replacement checks the latest workspace,
+// not the save status or draft from when the chooser was used.
+await rawTextPage.getByRole('button', { name: 'Save comparison locally' }).click();
+const rawSaved = rawTextPage.getByRole('dialog', { name: 'Saved comparisons' });
+await rawSaved.getByLabel('New comparison name').fill('CRLF saved copy');
+await rawSaved.getByRole('button', { name: 'Save as new comparison' }).click();
+await rawTextPage.locator('[data-save-status="saved"]').waitFor();
+await rawTextPage.evaluate(() => {
+  const original = File.prototype.text;
+  File.prototype.text = async function () {
+    if (this.name === 'slow-session.difflens.json' || this.name === 'slow-source.txt') {
+      await new Promise(resolve => { window.__releaseTextRead = resolve; });
+    }
+    return original.call(this);
+  };
+});
+const delayedImport = rawTextPage.waitForEvent('filechooser');
+await rawTextPage.getByRole('button', { name: 'Open comparison session' }).click();
+await (await delayedImport).setFiles({
+  name: 'slow-session.difflens.json',
+  mimeType: 'application/json',
+  buffer: Buffer.from(savedSessionText),
+});
+await rawTextPage.waitForFunction(() => !!window.__releaseTextRead);
+await rawTextPage.getByRole('button', { name: 'Edit sources' }).click();
+await rawChanged.fill('Edited while session loads');
+await rawTextPage.evaluate(() => {
+  window.__releaseTextRead();
+  delete window.__releaseTextRead;
+});
+await rawTextPage.getByRole('dialog', { name: 'Open this comparison session?' }).waitFor();
+await rawTextPage.getByRole('button', { name: 'Keep editing' }).click();
+check('a session read started from a saved workspace protects edits made while it loads',
+  (await rawChanged.inputValue()) === 'Edited while session loads');
+
+await rawTextPage.locator('.source-editor .input-panel--right input[type=file]').setInputFiles({
+  name: 'slow-source.txt', mimeType: 'text/plain', buffer: Buffer.from('Older load'),
+});
+await rawTextPage.waitForFunction(() => !!window.__releaseTextRead);
+await rawChanged.fill('Newer text input');
+await rawTextPage.evaluate(() => {
+  window.__releaseTextRead();
+  delete window.__releaseTextRead;
+});
+await rawTextPage.locator('.diff-view .cell__text').filter({ hasText: 'Newer text input' }).waitFor();
+check('a delayed source load cannot overwrite newer typing',
+  (await rawChanged.inputValue()) === 'Newer text input');
+await rawTextPage.close();
+
 // Check the narrow layout, text entry and a search hit inside hidden context.
 const mobile = await browser.newPage({ viewport: { width: 390, height: 844 } });
 await mobile.goto(`http://localhost:${PORT}/`);
+check('Compare is reachable without scrolling on a narrow screen',
+  await mobile.getByRole('button', { name: 'Compare', exact: true }).evaluate(el => {
+    const rect = el.getBoundingClientRect();
+    return rect.top >= 0 && rect.bottom <= innerHeight;
+  }));
 const mobileOriginal = mobile.getByRole('textbox', { name: 'Original text' });
 const mobileChanged = mobile.getByRole('textbox', { name: 'Changed text' });
 await mobileOriginal.fill('text before\nhidden needle\nanchor\noriginal change');
@@ -1512,6 +1654,25 @@ check('narrow text entry remains open after both sources have text',
     !(await mobile.locator('.diff-view').isVisible()));
 await mobile.getByRole('button', { name: 'Compare', exact: true }).click();
 await mobile.locator('.diff-view').waitFor();
+check('narrow results default to Unified with wrapping',
+  (await mobile.getByRole('tab', { name: 'Unified' }).getAttribute('aria-selected')) === 'true' &&
+    await mobile.locator('.diff-scroll').evaluate(el => el.classList.contains('diff-scroll--wrap') &&
+      el.scrollWidth === el.clientWidth));
+const mobileDetails = mobile.getByRole('button', { name: 'Diff details' });
+await mobileDetails.click();
+const mobileSheet = mobile.getByRole('dialog', { name: 'Diff details' });
+check('mobile Details opens a bottom sheet in the viewport',
+  await mobileSheet.evaluate(el => el.open && Math.abs(el.getBoundingClientRect().bottom - innerHeight) < 2));
+await mobile.keyboard.press('Escape');
+await mobileSheet.waitFor({ state: 'hidden' });
+check('closing the mobile sheet returns focus to Details',
+  await mobileDetails.evaluate(el => el === document.activeElement));
+await mobile.getByRole('button', { name: 'Edit sources' }).click();
+const mobileDock = mobile.getByRole('region', { name: 'Edit sources' });
+await mobileDock.getByRole('button', { name: 'Changed', exact: true }).click();
+check('the narrow editor switches between one source at a time',
+  !(await mobileOriginal.isVisible()) && await mobileChanged.isVisible());
+await mobileDock.getByRole('button', { name: 'Done' }).click();
 await mobile.getByRole('button', { name: 'View options' }).click();
 await mobile.getByRole('menuitemcheckbox', { name: 'Hide unchanged lines' }).click();
 await mobile.locator('.diff-row--gap').waitFor();
@@ -1528,6 +1689,10 @@ check('search reveals only the matching hidden line while keeping other context 
 check('opening the search bar and jumping does not widen the narrow layout',
   await mobile.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
 await mobileSearch.press('Escape');
+await mobile.getByRole('tab', { name: 'Side by side' }).click();
+await mobile.reload({ waitUntil: 'networkidle' });
+check('an explicit narrow-screen view choice survives reload',
+  (await mobile.getByRole('tab', { name: 'Side by side' }).getAttribute('aria-selected')) === 'true');
 await mobile.close();
 
 check('no errors accumulated', errors.length === 0, errors.join(' | '));

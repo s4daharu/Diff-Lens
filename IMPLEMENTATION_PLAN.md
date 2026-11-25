@@ -138,6 +138,13 @@ Acceptance:
 - [x] Count and navigate all search matches, revealing individual hidden lines.
 - [x] Save, reopen, rename, and delete comparisons locally with optional autosave,
   while retaining portable `.difflens.json` import and export.
+- [x] Preserve source filenames and raw line endings through normal text editing.
+- [x] Make the narrow-screen comparison action sticky; default to wrapped Unified
+  and open Details as a sheet.
+- [x] Separate display settings and filters, show which filters are active, and
+  support keyboard navigation in result menus.
+- [x] Add a smaller, resizable dock with single-source editing, visible save
+  status, unsaved-work confirmation, and direct source copy and download.
 
 ### Milestone 6 — Structured spreadsheet comparison
 

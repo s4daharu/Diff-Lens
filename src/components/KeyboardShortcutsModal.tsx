@@ -8,7 +8,7 @@ interface KeyboardShortcutsModalProps {
 
 const SHORTCUTS = [
   { key: 'Ctrl / ⌘ + 1', desc: 'Switch to Side-by-Side view' },
-  { key: 'Ctrl / ⌘ + 2', desc: 'Switch to Inline unified view' },
+  { key: 'Ctrl / ⌘ + 2', desc: 'Switch to Unified view' },
   { key: 'Ctrl / ⌘ + S', desc: 'Download .patch file' },
   { key: 'Ctrl / ⌘ + F', desc: 'Find within diff' },
   { key: 'Ctrl / ⌘ + E', desc: 'Open or focus the docked source editor' },

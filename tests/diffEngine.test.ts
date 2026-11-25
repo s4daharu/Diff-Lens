@@ -18,6 +18,7 @@ import { applyPatch } from 'diff';
 import { buildVirtualOffsets, findVirtualIndex, getVirtualRange } from '../src/lib/virtualRows';
 import { buildChangeSections } from '../src/lib/changeSections';
 import { createLineSearch, indexDiffMatches } from '../src/lib/diffSearch';
+import { applyEditorText, normalizeEditorText } from '../src/lib/textEditing';
 import { mergeChangeSections } from '../src/lib/mergeSections';
 import {
   describeReportOptions,
@@ -74,6 +75,20 @@ console.log('--- basic modification ---');
   check('modified old/new content', modified[0].oldLine === 'b' && modified[0].newLine === 'B', modified[0]);
   check('old numbers sequential', r.rows.map((x) => x.oldNum).join(',') === '1,2,3,4,5');
   check('new numbers sequential', r.rows.map((x) => x.newNum).join(',') === '1,2,3,4,5');
+}
+
+console.log('--- raw text editing ---');
+{
+  check('a one-character edit preserves CRLF and the final newline',
+    applyEditorText('one\r\ntwo\r\nthree\r\n', 'one\ntwo!\nthree\n') === 'one\r\ntwo!\r\nthree\r\n');
+  check('inserting a line inherits the nearest existing ending',
+    applyEditorText('one\r\ntwo', 'one\ninserted\ntwo') === 'one\r\ninserted\r\ntwo');
+  check('mixed endings outside an edit remain unchanged',
+    applyEditorText('one\r\ntwo\rthree\nfour', 'one\ntwo!\nthree\nfour') === 'one\r\ntwo!\rthree\nfour');
+  check('deleting between a bare CR and an LF still leaves two line breaks',
+    normalizeEditorText(applyEditorText('one\rmiddle\nlast', 'one\n\nlast')) === 'one\n\nlast');
+  check('no-op changes keep the raw source exactly',
+    applyEditorText('one\r\ntwo\rthree\n', 'one\ntwo\nthree\n') === 'one\r\ntwo\rthree\n');
 }
 
 console.log('--- full-result diff search ---');

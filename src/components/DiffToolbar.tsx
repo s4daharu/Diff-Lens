@@ -1,14 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ViewMode } from '../lib/types';
+import { MenuCheck, ToolbarMenu } from './ToolbarMenu';
 import {
   CloseIcon,
   CopyIcon,
   DownloadIcon,
-  CheckIcon,
   ChevronDownIcon,
   ChevronUpIcon,
   FileCodeIcon,
-  HashIcon,
   ListIcon,
   SearchIcon,
   SlidersIcon,
@@ -21,12 +20,19 @@ interface DiffToolbarProps {
   onWrapChange: (wrap: boolean) => void;
   hideWhitespaceChanges: boolean;
   onHideWhitespaceChangesChange: (hidden: boolean) => void;
+  ignoreCase: boolean;
+  onIgnoreCaseChange: (ignore: boolean) => void;
+  ignoreLineEndings: boolean;
+  onIgnoreLineEndingsChange: (ignore: boolean) => void;
+  activeFilters: string[];
+  onOpenAdvancedFilters: () => void;
   hideUnchangedLines: boolean;
   onHideUnchangedLinesChange: (hidden: boolean) => void;
   lineNumbers: boolean;
   onLineNumbersChange: (show: boolean) => void;
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
+  narrow: boolean;
   searchOpen: boolean;
   onToggleSearch: () => void;
   searchQuery: string;
@@ -46,6 +52,8 @@ interface DiffToolbarProps {
   onPrintReport: (mode: ViewMode) => void;
   reportReady: boolean;
   onSaveSession: () => void;
+  onCopySource: (side: 'old' | 'new') => void;
+  onDownloadSource: (side: 'old' | 'new') => void;
   canUndoMerge: boolean;
   canRedoMerge: boolean;
   onUndoMerge: () => void;
@@ -62,12 +70,19 @@ export function DiffToolbar({
   onWrapChange,
   hideWhitespaceChanges,
   onHideWhitespaceChangesChange,
+  ignoreCase,
+  onIgnoreCaseChange,
+  ignoreLineEndings,
+  onIgnoreLineEndingsChange,
+  activeFilters,
+  onOpenAdvancedFilters,
   hideUnchangedLines,
   onHideUnchangedLinesChange,
   lineNumbers,
   onLineNumbersChange,
   sidebarOpen,
   onToggleSidebar,
+  narrow,
   searchOpen,
   onToggleSearch,
   searchQuery,
@@ -87,6 +102,8 @@ export function DiffToolbar({
   onPrintReport,
   reportReady,
   onSaveSession,
+  onCopySource,
+  onDownloadSource,
   canUndoMerge,
   canRedoMerge,
   onUndoMerge,
@@ -95,9 +112,8 @@ export function DiffToolbar({
   copied,
   copiedMarkdown,
 }: DiffToolbarProps) {
-  const [openMenu, setOpenMenu] = useState<'view' | 'export' | null>(null);
-  const viewMenuRef = useRef<HTMLDivElement>(null);
-  const exportMenuRef = useRef<HTMLDivElement>(null);
+  const [openMenu, setOpenMenu] = useState<'view' | 'filter' | 'export' | null>(null);
+  const controls = useRef<HTMLDivElement>(null);
   const searchButton = useRef<HTMLButtonElement>(null);
   const searchInput = useRef<HTMLInputElement>(null);
 
@@ -115,54 +131,50 @@ export function DiffToolbar({
   useEffect(() => {
     if (!openMenu) return;
     const onClick = (e: MouseEvent) => {
-      const activeRef = openMenu === 'view' ? viewMenuRef : exportMenuRef;
-      if (activeRef.current && !activeRef.current.contains(e.target as Node)) {
-        setOpenMenu(null);
-      }
+      const active = controls.current?.querySelector('.toolbar-menu-trigger[aria-expanded=true]')?.parentElement;
+      if (!active?.contains(e.target as Node)) setOpenMenu(null);
     };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpenMenu(null);
-    };
-    document.addEventListener('mousedown', onClick);
-    document.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onClick);
     return () => {
-      document.removeEventListener('mousedown', onClick);
-      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onClick);
     };
   }, [openMenu]);
 
   return (
-    <>
+    <div className="result-controls" ref={controls}>
       <div className="diff-toolbar">
         <div
           className="segmented"
           role="tablist"
           aria-label="View mode"
           onKeyDown={(e) => {
-            if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+            if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
             e.preventDefault();
-            onViewModeChange(
-              viewMode === 'side-by-side' ? 'inline' : 'side-by-side',
-            );
+            const index = e.key === 'Home' ? 0 : e.key === 'End' ? 1 : viewMode === 'side-by-side' ? 1 : 0;
+            onViewModeChange(index === 0 ? 'side-by-side' : 'inline');
+            e.currentTarget.querySelectorAll<HTMLButtonElement>('[role=tab]')[index]?.focus();
           }}
         >
           <button
             type="button"
             role="tab"
+            aria-label="Side by side"
             aria-selected={viewMode === 'side-by-side'}
+            tabIndex={viewMode === 'side-by-side' ? 0 : -1}
             className={`segmented__btn ${viewMode === 'side-by-side' ? 'segmented__btn--active' : ''}`}
             onClick={() => onViewModeChange('side-by-side')}
           >
-            Side by side
+            <span className="view-label-full">Side by side</span><span className="view-label-compact" aria-hidden="true">Split</span>
           </button>
           <button
             type="button"
             role="tab"
             aria-selected={viewMode === 'inline'}
+            tabIndex={viewMode === 'inline' ? 0 : -1}
             className={`segmented__btn ${viewMode === 'inline' ? 'segmented__btn--active' : ''}`}
             onClick={() => onViewModeChange('inline')}
           >
-            Inline
+            Unified
           </button>
         </div>
 
@@ -182,112 +194,56 @@ export function DiffToolbar({
           </button>
         </div>
 
-        <div className="dropdown-wrapper" ref={viewMenuRef}>
-          <button
-            type="button"
-            className="btn btn--small"
-            onClick={() =>
-              setOpenMenu((menu) => (menu === 'view' ? null : 'view'))
-            }
-            title="Control how differences are displayed"
-            aria-label="View options"
-            aria-expanded={openMenu === 'view'}
-            aria-haspopup="menu"
-          >
-            <SlidersIcon size={14} />
-            <span className="btn__label">View</span>
+        <div className="diff-toolbar__group">
+          <button ref={searchButton} type="button"
+            className={`btn btn--small ${searchOpen ? 'btn--primary' : ''}`}
+            onClick={onToggleSearch} title="Search within diff (Ctrl+F)" aria-label="Find in diff"
+            aria-expanded={searchOpen}>
+            <SearchIcon size={14} /><span>Find</span>
           </button>
-
-          {openMenu === 'view' && (
-            <div
-              className="dropdown-menu dropdown-menu--view"
-              role="menu"
-              aria-label="View options"
-            >
-              <button
-                type="button"
-                className="dropdown-item dropdown-item--checkable"
-                role="menuitemcheckbox"
-                aria-checked={hideWhitespaceChanges}
-                onClick={() =>
-                  onHideWhitespaceChangesChange(!hideWhitespaceChanges)
-                }
-                title="Ignore whitespace-only differences when comparing lines"
-              >
-                <span className="dropdown-item__check" aria-hidden="true">
-                  {hideWhitespaceChanges && <CheckIcon size={13} />}
-                </span>
-                <span>Hide whitespace changes</span>
-              </button>
-              <button
-                type="button"
-                className="dropdown-item dropdown-item--checkable"
-                role="menuitemcheckbox"
-                aria-checked={hideUnchangedLines}
-                onClick={() =>
-                  onHideUnchangedLinesChange(!hideUnchangedLines)
-                }
-                title="Show only changed lines, with expandable hidden regions"
-              >
-                <span className="dropdown-item__check" aria-hidden="true">
-                  {hideUnchangedLines && <CheckIcon size={13} />}
-                </span>
-                <span>Hide unchanged lines</span>
-              </button>
-              <button
-                type="button"
-                className="dropdown-item dropdown-item--checkable"
-                role="menuitemcheckbox"
-                aria-checked={!wrap}
-                onClick={() => onWrapChange(!wrap)}
-                title="Keep long lines on one row and scroll horizontally"
-              >
-                <span className="dropdown-item__check" aria-hidden="true">
-                  {!wrap && <CheckIcon size={13} />}
-                </span>
-                <span>Disable line wrap</span>
-              </button>
-            </div>
-          )}
         </div>
 
-        <div className="diff-toolbar__group">
+        <div className="diff-toolbar__group diff-toolbar__secondary">
+          <ToolbarMenu name="View options" label="View" icon={<SlidersIcon size={14} />}
+            open={openMenu === 'view'} onOpenChange={(open) => setOpenMenu(open ? 'view' : null)}>
+            {() => <>
+              <MenuCheck checked={hideUnchangedLines} onToggle={() => onHideUnchangedLinesChange(!hideUnchangedLines)}>
+                Hide unchanged lines
+              </MenuCheck>
+              <MenuCheck checked={wrap} onToggle={() => onWrapChange(!wrap)}>Wrap long lines</MenuCheck>
+              <MenuCheck checked={lineNumbers} onToggle={() => onLineNumbersChange(!lineNumbers)}>Line numbers</MenuCheck>
+            </>}
+          </ToolbarMenu>
+
+          <ToolbarMenu name="Comparison filters" label="Filters" icon={<SlidersIcon size={14} />}
+            open={openMenu === 'filter'} onOpenChange={(open) => setOpenMenu(open ? 'filter' : null)}>
+            {(close) => <>
+              <MenuCheck checked={hideWhitespaceChanges} onToggle={() => onHideWhitespaceChangesChange(!hideWhitespaceChanges)}>
+                Ignore whitespace
+              </MenuCheck>
+              <MenuCheck checked={ignoreCase} onToggle={() => onIgnoreCaseChange(!ignoreCase)}>Ignore case</MenuCheck>
+              <MenuCheck checked={ignoreLineEndings} onToggle={() => onIgnoreLineEndingsChange(!ignoreLineEndings)}>
+                Ignore line endings
+              </MenuCheck>
+              <button type="button" className="dropdown-item" role="menuitem" tabIndex={-1}
+                onClick={() => { close(); onOpenAdvancedFilters(); }}>Advanced filters…</button>
+            </>}
+          </ToolbarMenu>
+
           <button
             type="button"
             className="btn btn--small btn--toggle"
             aria-pressed={sidebarOpen}
             aria-expanded={sidebarOpen}
-            aria-controls="diff-sidebar"
+            aria-controls={sidebarOpen ? (narrow ? 'text-details-sheet' : 'diff-sidebar') : undefined}
+            aria-haspopup={narrow ? 'dialog' : undefined}
             data-details-toggle="true"
             onClick={onToggleSidebar}
             title={sidebarOpen ? 'Hide diff details' : 'Show diff details'}
             aria-label="Diff details"
           >
             <ListIcon size={14} />
-            <span className="btn__label">Details</span>
-          </button>
-          <button
-            type="button"
-            className="btn btn--small btn--toggle"
-            aria-pressed={lineNumbers}
-            onClick={() => onLineNumbersChange(!lineNumbers)}
-            title="Show or hide line numbers"
-            aria-label="Line numbers"
-          >
-            <HashIcon size={14} />
-            <span className="btn__label">Numbers</span>
-          </button>
-          <button
-            ref={searchButton}
-            type="button"
-            className={`btn btn--small ${searchOpen ? 'btn--primary' : ''}`}
-            onClick={onToggleSearch}
-            title="Search within diff (Ctrl+F)"
-            aria-label="Find in diff"
-            aria-expanded={searchOpen}
-          >
-            <SearchIcon size={14} />
-            <span className="btn__label">Find</span>
+            <span>Details</span>
           </button>
         </div>
 
@@ -320,34 +276,31 @@ export function DiffToolbar({
 
         <div className="diff-toolbar__spacer" />
 
-        <div className="dropdown-wrapper" ref={exportMenuRef}>
-          <button
-            type="button"
-            className="btn btn--small"
-            onClick={() => setOpenMenu((menu) => (menu === 'export' ? null : 'export'))}
-            title="Export the diff (patch, Markdown, HTML report)"
-            aria-label="Export options"
-            aria-expanded={openMenu === 'export'}
-            aria-haspopup="menu"
-            data-export-toggle="true"
-          >
-            <FileCodeIcon size={14} />
-            <span className="btn__label">Export</span>
-          </button>
-
-          {openMenu === 'export' && (
-            <div
-              className="dropdown-menu dropdown-menu--right"
-              role="menu"
-              aria-label="Export options"
-            >
+        <ToolbarMenu name="Export options" label="Export" icon={<FileCodeIcon size={14} />}
+          open={openMenu === 'export'} onOpenChange={(open) => setOpenMenu(open ? 'export' : null)} right exportTrigger>
+          {(close) => <>
+              <div className="dropdown-header" aria-hidden="true">Source text</div>
+              {([['old', 'Original'], ['new', 'Changed']] as const).map(([side, label]) => (
+                <div key={side} role="presentation">
+                  <button type="button" className="dropdown-item" role="menuitem" tabIndex={-1}
+                    onClick={() => { close(); onCopySource(side); }}>
+                    <CopyIcon size={14} /> Copy {label} text
+                  </button>
+                  <button type="button" className="dropdown-item" role="menuitem" tabIndex={-1}
+                    onClick={() => { close(); onDownloadSource(side); }}>
+                    <DownloadIcon size={14} /> Download {label} text
+                  </button>
+                </div>
+              ))}
+              <div className="dropdown-header" aria-hidden="true">Comparison</div>
               <button
                 type="button"
                 className="dropdown-item"
                 role="menuitem"
+                tabIndex={-1}
                 onClick={() => {
+                  close();
                   onCopyPatch();
-                  setOpenMenu(null);
                 }}
                 disabled={!patchReady}
               >
@@ -358,9 +311,10 @@ export function DiffToolbar({
                 type="button"
                 className="dropdown-item"
                 role="menuitem"
+                tabIndex={-1}
                 onClick={() => {
+                  close();
                   onDownloadPatch();
-                  setOpenMenu(null);
                 }}
                 disabled={!patchReady}
               >
@@ -371,9 +325,10 @@ export function DiffToolbar({
                 type="button"
                 className="dropdown-item"
                 role="menuitem"
+                tabIndex={-1}
                 onClick={() => {
+                  close();
                   onCopyMarkdown();
-                  setOpenMenu(null);
                 }}
                 disabled={!patchReady}
               >
@@ -384,9 +339,10 @@ export function DiffToolbar({
                 type="button"
                 className="dropdown-item"
                 role="menuitem"
+                tabIndex={-1}
                 onClick={() => {
+                  close();
                   onExportHtml();
-                  setOpenMenu(null);
                 }}
                 disabled={!reportReady}
               >
@@ -397,9 +353,10 @@ export function DiffToolbar({
                 type="button"
                 className="dropdown-item"
                 role="menuitem"
+                tabIndex={-1}
                 disabled={!reportReady}
                 onClick={() => {
-                  setOpenMenu(null);
+                  close();
                   onPrintReport('side-by-side');
                 }}
               >
@@ -410,9 +367,10 @@ export function DiffToolbar({
                 type="button"
                 className="dropdown-item"
                 role="menuitem"
+                tabIndex={-1}
                 disabled={!reportReady}
                 onClick={() => {
-                  setOpenMenu(null);
+                  close();
                   onPrintReport('inline');
                 }}
               >
@@ -423,19 +381,24 @@ export function DiffToolbar({
                 type="button"
                 className="dropdown-item"
                 role="menuitem"
+                tabIndex={-1}
                 onClick={() => {
+                  close();
                   onSaveSession();
-                  setOpenMenu(null);
                 }}
               >
                 <DownloadIcon size={14} />
                 <span>Export comparison session</span>
               </button>
-            </div>
-          )}
-        </div>
+          </>}
+        </ToolbarMenu>
       </div>
 
+      {activeFilters.length > 0 && (
+        <div className="active-text-filters" role="group" aria-label="Active comparison filters">
+          <span>Ignoring:</span>{activeFilters.map((filter) => <span key={filter} className="filter-badge">{filter}</span>)}
+        </div>
+      )}
       {searchOpen && (
         <div className="diff-search-bar" role="search" aria-label="Find in diff"
           onKeyDown={(event) => {
@@ -497,6 +460,6 @@ export function DiffToolbar({
           </button>
         </div>
       )}
-    </>
+    </div>
   );
 }

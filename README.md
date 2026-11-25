@@ -10,12 +10,14 @@ with all diff computation happening in a Web Worker.
 
 - Workspace layout: diff canvas fills the viewport, with a summary sidebar
   (stats, change outline, options) and a compact toolbar
-- Side-by-side and inline (unified) text diff views
+- Side-by-side and Unified text diff views. Narrow screens default to wrapped
+  Unified unless you choose a different view or wrapping preference.
 - Local image comparison for PNG/JPEG/WebP with side-by-side, slider, fade,
   subtract, and highlight modes (up to 25 MB per file and 16 megapixels per comparison canvas)
 - Intra-line highlighting at character, word, or Smart automatic granularity
-- Dual source editors with an explicit **Compare** action, plus a docked
-  **Edit sources** panel that updates the visible diff as you type
+- Dual source editors with an explicit **Compare** action, plus a compact,
+  resizable **Edit sources** dock. Edit one or both sides while the diff updates;
+  normal edits preserve file names and line endings.
 - Change-section outline — navigate contiguous edit hunks instead of stepping line by line
 - Bounded moved-block detection with paired-location navigation and ambiguity-safe matching
 - Per-section Changed ↔ Original merge arrows in the result, with source-range-safe
@@ -23,15 +25,19 @@ with all diff computation happening in a Web Worker.
 - Difference minimap gutter with pointer and keyboard navigation
 - Image pixel threshold/ignore-alpha controls, bounded changed-region navigation, synchronized zoom/pan, and highlight PNG export
 - Paste text, open files (up to 10 MB), or drag & drop
+- Separate **Filters** and **View** settings. Active filters are shown above the
+  result, and filtered matches are distinguished from identical texts.
 - Ignore case / whitespace / line endings (CRLF) plus ordered literal/regex custom ignore rules
 - Adjustable context lines with hidden-region collapse
 - Diff stats, change navigation in the toolbar, and find-in-diff with match count
   and navigation through collapsed and off-screen lines
-- Unified `.patch` / Markdown / HTML report export
+- Copy or download either source directly, plus unified `.patch`, Markdown,
+  and HTML comparison export
 - Browser-native Print / Save as PDF reports in side-by-side or inline layouts with full non-virtualized report rows
 - **Saved** comparison library in this browser, with reopen, rename, delete, manual
   updates, and optional autosave per comparison. A stale tab cannot overwrite a
-  newer saved copy.
+  newer saved copy. The workspace shows the save state and asks before discarding
+  unsaved work when opening another comparison.
 - Portable `.difflens.json` comparison sessions for importing or exporting both
   sources and view preferences
 - Dark mode, wrap toggle, line numbers toggle
@@ -42,7 +48,7 @@ with all diff computation happening in a Web Worker.
 | Shortcut | Action |
 | --- | --- |
 | `Ctrl/⌘ + 1` | Side-by-side view |
-| `Ctrl/⌘ + 2` | Inline view |
+| `Ctrl/⌘ + 2` | Unified view |
 | `Ctrl/⌘ + S` | Download `.patch` |
 | `Ctrl/⌘ + F` | Find within diff |
 | `Ctrl/⌘ + E` | Open or focus the docked source editor |
@@ -78,8 +84,8 @@ npm run test:e2e   # Playwright smoke tests against a production build
 `src/lib/diffEngine.ts` runs a line-level Myers diff (via a `Diff` subclass
 that adds `ignoreCase` support, which jsdiff's typed line options omit),
 pairs removed/added lines into "modified" rows, and produces char- or
-word-level spans for those pairs. The unified patch is generated directly
-from the same rows so exports always match what is displayed.
+word-level spans for those pairs. With ignore filters active, the unified
+patch uses the raw comparison so the exported patch remains replayable.
 `src/diffWorker.ts` keeps heavy text computation off the main thread.
 Image comparison uses `src/imageDiffWorker.ts` with `createImageBitmap` and
 `OffscreenCanvas` where available, plus a browser Canvas fallback. Image

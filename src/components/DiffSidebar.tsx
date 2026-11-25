@@ -23,7 +23,8 @@ import {
 
 interface DiffSidebarProps {
   stats: DiffStats | null;
-  identical: boolean;
+  equalityLabel: string | null;
+  advancedRequest: number;
   timeMs?: number;
   totalSections: number;
   currentSectionIndex: number | null;
@@ -185,7 +186,8 @@ function IgnoreRuleEditor({
 
 export function DiffSidebar({
   stats,
-  identical,
+  equalityLabel,
+  advancedRequest,
   timeMs,
   totalSections,
   currentSectionIndex,
@@ -210,6 +212,13 @@ export function DiffSidebar({
   onClose,
 }: DiffSidebarProps) {
   const listRef = useRef<HTMLDivElement>(null);
+  const optionsRef = useRef<HTMLDetailsElement>(null);
+
+  useEffect(() => {
+    if (!advancedRequest || !optionsRef.current) return;
+    optionsRef.current.open = true;
+    optionsRef.current.querySelector('summary')?.focus();
+  }, [advancedRequest]);
 
   useEffect(() => {
     if (activeSectionStartRow == null || !listRef.current) return;
@@ -231,6 +240,7 @@ export function DiffSidebar({
       onKeyDown={(e) => {
         if (e.key === 'Escape') {
           e.preventDefault();
+          e.stopPropagation();
           onClose();
         }
       }}
@@ -239,6 +249,7 @@ export function DiffSidebar({
         <h2 id="diff-sidebar-title">Diff details</h2>
         <button
           type="button"
+          data-dialog-focus
           className="btn btn--small btn--icon btn--ghost"
           onClick={onClose}
           aria-label="Close details panel"
@@ -247,13 +258,13 @@ export function DiffSidebar({
           <CloseIcon size={15} />
         </button>
       </div>
-      {identical && stats && (
+      {equalityLabel && stats && (
         <div className="sidebar-section">
           <div className="sidebar-identical">
             <CheckIcon size={16} />
             <p>
               <span className="sidebar-identical-msg">
-                No differences found — the texts are identical.
+                {equalityLabel}
               </span>
               <span className="sidebar-identical__meta">
                 {stats.oldLines} lines · {stats.unchanged} unchanged
@@ -264,7 +275,7 @@ export function DiffSidebar({
         </div>
       )}
 
-      {!identical && stats && (
+      {!equalityLabel && stats && (
         <>
           <div className="sidebar-section">
             <h3 className="sidebar-heading">Overview</h3>
@@ -504,7 +515,7 @@ export function DiffSidebar({
         </div>
       )}
 
-      <details className="sidebar-options">
+      <details className="sidebar-options" ref={optionsRef}>
         <summary>
           <SlidersIcon size={14} />
           Diff options

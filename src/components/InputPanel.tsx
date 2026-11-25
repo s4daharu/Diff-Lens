@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type DragEvent } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import {
   CloseIcon,
   CopyIcon,
@@ -13,6 +13,7 @@ import {
   applyTextTransform,
 } from '../lib/diffEngine';
 import type { TextTransform } from '../lib/types';
+import { applyEditorText, normalizeEditorText } from '../lib/textEditing';
 
 export const MAX_FILE_BYTES = 10 * 1024 * 1024;
 
@@ -41,10 +42,14 @@ export function InputPanel({
 }: InputPanelProps) {
   const fileRef = useRef<HTMLInputElement>(null);
   const toolsMenuRef = useRef<HTMLDivElement>(null);
+  const sourceReadId = useRef(0);
   const dragDepth = useRef(0);
   const [dragOver, setDragOver] = useState(false);
   const [copied, setCopied] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
+
+  // A load started before a new edit, swap, or workspace change no longer owns this source.
+  useLayoutEffect(() => () => { sourceReadId.current++; }, [value, fileName]);
 
   useEffect(() => {
     if (!toolsOpen) return;
@@ -66,16 +71,19 @@ export function InputPanel({
 
   const handleFile = async (file: File | undefined | null) => {
     if (!file) return;
+    const requestId = ++sourceReadId.current;
     if (file.size > MAX_FILE_BYTES) {
       onError(`"${file.name}" is larger than the 10 MB limit.`);
       return;
     }
     try {
-      onChange(await file.text());
+      const text = await file.text();
+      if (requestId !== sourceReadId.current) return;
+      onChange(text);
       onFileInfo?.(file.name);
       onReadyChange?.(true);
     } catch {
-      onError(`Could not read "${file.name}".`);
+      if (requestId === sourceReadId.current) onError(`Could not read "${file.name}".`);
     }
   };
 
@@ -104,15 +112,17 @@ export function InputPanel({
   };
 
   const handlePaste = async () => {
+    const requestId = ++sourceReadId.current;
     try {
       const text = await navigator.clipboard.readText();
+      if (requestId !== sourceReadId.current) return;
       if (text) {
         onChange(text);
         onFileInfo?.(null);
         onReadyChange?.(true);
       }
     } catch {
-      onError('Clipboard access denied. Please paste directly into the box.');
+      if (requestId === sourceReadId.current) onError('Clipboard access denied. Please paste directly into the box.');
     }
   };
 
@@ -121,14 +131,16 @@ export function InputPanel({
     if (!res.success) {
       onError(res.error ?? 'Transformation failed');
     } else {
-      onChange(res.result);
+      onChange(applyEditorText(value, normalizeEditorText(res.result)));
       setToolsOpen(false);
     }
   };
 
-  const chars = value.length;
-  const lines = countLines(value);
-  const words = countWords(value);
+  const { editorText, lines, words } = useMemo(() => ({
+    editorText: normalizeEditorText(value),
+    lines: countLines(value),
+    words: countWords(value),
+  }), [value]);
 
   return (
     <section className={`panel input-panel input-panel--${accent}`}>
@@ -272,10 +284,9 @@ export function InputPanel({
         <textarea
           className="input-panel__textarea"
           aria-label={title}
-          value={value}
+          value={editorText}
           onChange={(e) => {
-            onChange(e.target.value);
-            onFileInfo?.(null);
+            onChange(applyEditorText(value, e.target.value));
             onReadyChange?.(true);
           }}
           placeholder={
@@ -289,7 +300,7 @@ export function InputPanel({
         <footer className="input-panel__footer">
           <span>{lines.toLocaleString()} lines</span>
           <span>{words.toLocaleString()} words</span>
-          <span>{chars.toLocaleString()} chars</span>
+          <span>{value.length.toLocaleString()} chars</span>
         </footer>
       </div>
       <input
