@@ -1,7 +1,11 @@
 import { memo, useCallback, useMemo, useRef, useState, useEffect, type RefObject } from 'react';
 import type { ThemedToken } from 'shiki';
 import type { DiffRow, Span, ViewMode } from '../lib/types';
+import type { ChangeSection } from '../lib/changeSections';
+import type { DiffSearchMatch, LineSearch, SearchRange, SearchSide } from '../lib/diffSearch';
+import type { MergeDirection } from '../lib/mergeSections';
 import { buildVirtualOffsets, getVirtualRange } from '../lib/virtualRows';
+import { MergeButtons } from './MergeButtons';
 import {
   CopyIcon,
   CheckIcon,
@@ -10,14 +14,27 @@ import {
   ExpandUpIcon,
 } from './Icons';
 
+export interface ChangeJump {
+  focus: boolean;
+}
+
+export interface SearchTarget extends DiffSearchMatch {
+  visibleIndex: number;
+}
+
 interface DiffViewProps {
   rows: DiffRow[];
   viewMode: ViewMode;
   wrap: boolean;
   lineNumbers: boolean;
-  searchQuery?: string;
+  search?: LineSearch | null;
+  searchTarget?: SearchTarget | null;
   activeChangeRowIndex?: number | null;
   activeChangeEndRowIndex?: number | null;
+  changeJump?: ChangeJump | null;
+  sectionsAtStart?: ReadonlyMap<number, ChangeSection>;
+  onMergeSection?: (rowIndex: number, direction: MergeDirection) => void;
+  mergeDisabled?: boolean;
   onExpandGap?: (startRow: number, endRow: number, count: number) => void;
   onCopyNotice?: (msg: string) => void;
   getTokens?: ((line: string) => ThemedToken[] | null) | null;
@@ -28,6 +45,7 @@ const VIRTUALIZE_THRESHOLD = 800;
 const VIRTUAL_OVERSCAN_PX = 700;
 const BASE_ROW_HEIGHT = 21;
 const GAP_ROW_HEIGHT = 34;
+const EMPTY_HEIGHTS: ReadonlyMap<number, number> = new Map();
 
 function estimateDiffRowHeight(
   row: DiffRow,
@@ -55,7 +73,10 @@ function useVirtualWindow<T>(
   const previousItemsRef = useRef(items);
   const widthRef = useRef(0);
   const refreshFrameRef = useRef<number | null>(null);
-  const [measureVersion, setMeasureVersion] = useState(0);
+  const [measurement, setMeasurement] = useState<{
+    items: T[];
+    heights: ReadonlyMap<number, number>;
+  } | null>(null);
   const [viewport, setViewport] = useState({ top: 0, height: 0 });
 
   if (previousItemsRef.current !== items) {
@@ -63,21 +84,22 @@ function useVirtualWindow<T>(
     measurementsRef.current.clear();
   }
 
+  const heights = measurement?.items === items ? measurement.heights : EMPTY_HEIGHTS;
   const offsets = useMemo(
     () =>
       buildVirtualOffsets(
         items.length,
-        measurementsRef.current,
+        heights,
         (index) => estimateHeight(items[index]),
       ),
-    [items, estimateHeight, measureVersion],
+    [items, estimateHeight, heights],
   );
 
   const scheduleMeasurementRefresh = useCallback(() => {
     if (refreshFrameRef.current != null) return;
     refreshFrameRef.current = window.requestAnimationFrame(() => {
       refreshFrameRef.current = null;
-      setMeasureVersion((version) => version + 1);
+      setMeasurement({ items: previousItemsRef.current, heights: new Map(measurementsRef.current) });
     });
   }, []);
 
@@ -105,7 +127,7 @@ function useVirtualWindow<T>(
           measurementsRef.current.size > 0
         ) {
           measurementsRef.current.clear();
-          setMeasureVersion((version) => version + 1);
+          setMeasurement(null);
         }
         widthRef.current = width;
         setViewport({
@@ -272,98 +294,116 @@ function focusDiffRow(id: string): () => void {
   };
 }
 
-function highlightMatches(text: string, query?: string) {
-  if (!query || !query.trim() || !text) return text;
-  const q = query.trim();
-  const lowerText = text.toLowerCase();
-  const lowerQ = q.toLowerCase();
-  if (!lowerText.includes(lowerQ)) return text;
-
-  const parts: React.ReactNode[] = [];
-  let lastIndex = 0;
-  let idx = lowerText.indexOf(lowerQ);
-
-  while (idx !== -1) {
-    if (idx > lastIndex) {
-      parts.push(text.slice(lastIndex, idx));
-    }
-    parts.push(
-      <mark key={`${idx}-${parts.length}`} className="search-match">
-        {text.slice(idx, idx + q.length)}
-      </mark>,
-    );
-    lastIndex = idx + q.length;
-    idx = lowerText.indexOf(lowerQ, lastIndex);
-  }
-
-  if (lastIndex < text.length) {
-    parts.push(text.slice(lastIndex));
-  }
-
-  return <>{parts}</>;
-}
-
-function SpanText({
-  spans,
-  searchQuery,
-}: {
-  spans?: Span[];
-  searchQuery?: string;
-}) {
-  if (!spans) return null;
-  return (
-    <>
-      {spans.map((span, i) => (
-        <span
-          key={i}
-          className={
-            span.added ? 'hl hl--add' : span.removed ? 'hl hl--del' : undefined
-          }
-        >
-          {highlightMatches(span.text, searchQuery)}
-        </span>
-      ))}
-    </>
-  );
-}
-
-function SyntaxText({
-  tokens,
+function LineText({
   line,
-  searchQuery,
+  spans,
+  tokens,
+  search,
+  activeMatch,
 }: {
-  tokens: ThemedToken[] | null;
   line: string;
-  searchQuery?: string;
+  spans?: Span[];
+  tokens?: ThemedToken[] | null;
+  search?: LineSearch | null;
+  activeMatch?: SearchRange;
 }) {
-  if (!tokens || tokens.length === 0) {
-    return <>{highlightMatches(line, searchQuery)}</>;
-  }
+  const runs: { text: string; color?: string; className?: string }[] =
+    spans?.length ? spans.map(({text, added, removed}) => ({
+      text, className: added ? 'hl hl--add' : removed ? 'hl hl--del' : undefined,
+    })) : tokens?.length ? tokens.map(({ content, color }) => ({ text: content, color }))
+      : [{ text: line }];
+  const matches = search?.(line);
+  let match = matches?.next().value as SearchRange | undefined;
+  let offset = 0;
+  return runs.map(({ text, color, className }, index) => {
+    const start = offset;
+    offset += text.length;
+    const parts = [];
+    let cursor = start;
+    // Match whole lines, so a hit can span multiple syntax/diff runs.
+    while (match && match.start < offset) {
+      const from = Math.max(match.start, start);
+      const to = Math.min(match.end, offset);
+      if (cursor < from) parts.push(text.slice(cursor - start, from - start));
+      const active = match.start === activeMatch?.start;
+      parts.push(
+        <mark
+          key={from}
+          className={`search-match${active ? ' search-match--active' : ''}`}
+          data-search-active={active || undefined}
+        >
+          {text.slice(from - start, to - start)}
+        </mark>,
+      );
+      cursor = to;
+      if (match.end > offset) break;
+      match = matches?.next().value as SearchRange | undefined;
+    }
+    if (cursor < offset) parts.push(text.slice(cursor - start));
+    return <span key={index} className={className} style={color ? { color } : undefined}>{parts}</span>;
+  });
+}
+
+function RowMergeSlot({
+  section, onMerge, disabled,
+}: {
+  section?: ChangeSection;
+  onMerge?: DiffViewProps['onMergeSection'];
+  disabled?: boolean;
+}) {
   return (
-    <>
-      {tokens.map((token, i) =>
-        token.content ? (
-          <span key={i} style={{ color: token.color }}>
-            {highlightMatches(token.content, searchQuery)}
-          </span>
-        ) : null,
-      )}
-    </>
+    <div className="diff-merge-slot">
+      {section && onMerge && <MergeButtons entry={section} onMerge={onMerge} compact disabled={disabled} />}
+    </div>
   );
+}
+
+function useRowJump(
+  request: ChangeJump | SearchTarget | null | undefined,
+  jump: (request: ChangeJump | SearchTarget) => (() => void) | undefined,
+) {
+  const latest = useRef(jump);
+  useEffect(() => { latest.current = jump; }, [jump]);
+  // A recompute or virtual measurement must not replay an old jump or steal editor focus.
+  useEffect(() => request ? latest.current(request) : undefined, [request]);
+}
+
+function revealSearchMark(scroller: HTMLDivElement | null) {
+  let secondFrame = 0;
+  const frame = window.requestAnimationFrame(() => {
+    secondFrame = window.requestAnimationFrame(() => {
+      const mark = scroller?.querySelector('[data-search-active]');
+      if (!scroller || !mark) return;
+      const cell = mark.getBoundingClientRect();
+      const viewport = scroller.getBoundingClientRect();
+      if (cell.right > viewport.right - 24 || cell.left < viewport.left) {
+        scroller.scrollLeft += cell.left - viewport.left - scroller.clientWidth / 3;
+      }
+      if (cell.bottom > viewport.bottom || cell.top < viewport.top) {
+        scroller.scrollTop += cell.top - viewport.top - scroller.clientHeight / 2;
+      }
+    });
+  });
+  return () => {
+    window.cancelAnimationFrame(frame);
+    window.cancelAnimationFrame(secondFrame);
+  };
 }
 
 const RowSide = memo(function RowSide({
   row,
   side,
   lineNumbers,
-  searchQuery,
+  search,
+  activeMatch,
   onCopy,
   getTokens,
 }: {
   row: DiffRow;
   side: 'old' | 'new';
   lineNumbers: boolean;
-  searchQuery?: string;
+  search?: LineSearch | null;
+  activeMatch?: SearchRange;
   onCopy?: (text: string) => void;
   getTokens?: ((line: string) => ThemedToken[] | null) | null;
 }) {
@@ -399,16 +439,8 @@ const RowSide = memo(function RowSide({
       {lineNumbers && <span className="ln">{num}</span>}
       <span className="cell group-cell">
         <span className="cell__text">
-          {spans ? (
-            <SpanText spans={spans} searchQuery={searchQuery} />
-          ) : getTokens ? (
-            <SyntaxText
-              tokens={getTokens(line)}
-              line={line}
-              searchQuery={searchQuery}
-            />
-          ) : null}
-          {!spans && !getTokens && highlightMatches(line, searchQuery)}
+          <LineText line={line} spans={spans} tokens={!spans ? getTokens?.(line) : null}
+            search={search} activeMatch={activeMatch} />
         </span>
         <button
           type="button"
@@ -688,9 +720,14 @@ function SideBySide({
   rows,
   wrap,
   lineNumbers,
-  searchQuery,
+  search,
+  searchTarget,
   activeChangeRowIndex,
   activeChangeEndRowIndex,
+  changeJump,
+  sectionsAtStart,
+  onMergeSection,
+  mergeDisabled,
   onExpandGap,
   onCopyNotice,
   getTokens,
@@ -701,17 +738,23 @@ function SideBySide({
     [wrap],
   );
   const virtual = useVirtualWindow(rows, scrollRef, estimateHeight);
+  const { scrollToIndex } = virtual;
 
   const jumpToRow = useCallback(
-    (rowIndex: number) => virtual.scrollToIndex(rowIndex),
-    [virtual.scrollToIndex],
+    (rowIndex: number) => scrollToIndex(rowIndex),
+    [scrollToIndex],
   );
 
-  useEffect(() => {
-    if (activeChangeRowIndex == null) return;
+  useRowJump(changeJump, (request) => {
+    if (!('focus' in request) || activeChangeRowIndex == null) return;
     jumpToRow(activeChangeRowIndex);
-    return focusDiffRow(`diff-row-side-${activeChangeRowIndex}`);
-  }, [activeChangeRowIndex, jumpToRow]);
+    if (request.focus) return focusDiffRow(`diff-row-side-${activeChangeRowIndex}`);
+  });
+  useRowJump(searchTarget, (request) => {
+    if (!('visibleIndex' in request)) return;
+    scrollToIndex(request.visibleIndex, 'auto');
+    return revealSearchMark(scrollRef.current);
+  });
 
   const renderedRows = rows.slice(virtual.start, virtual.end);
 
@@ -732,6 +775,7 @@ function SideBySide({
       <div className="diff-col-head">
         {lineNumbers && <span className="ln ln--head" />}
         <span className="col-title col-title--old">Original</span>
+        <span className="diff-merge-heading" aria-hidden="true" />
         {lineNumbers && <span className="ln ln--head" />}
         <span className="col-title col-title--new">Changed</span>
       </div>
@@ -788,15 +832,21 @@ function SideBySide({
                   row={row}
                   side="old"
                   lineNumbers={lineNumbers}
-                  searchQuery={searchQuery}
+                  search={search}
+                  activeMatch={searchTarget?.visibleIndex === i && searchTarget.side === 'old'
+                    ? searchTarget : undefined}
                   onCopy={onCopyNotice}
                   getTokens={getTokens}
                 />
+                <RowMergeSlot section={sectionsAtStart?.get(i)}
+                  onMerge={onMergeSection} disabled={mergeDisabled} />
                 <RowSide
                   row={row}
                   side="new"
                   lineNumbers={lineNumbers}
-                  searchQuery={searchQuery}
+                  search={search}
+                  activeMatch={searchTarget?.visibleIndex === i && searchTarget.side === 'new'
+                    ? searchTarget : undefined}
                   onCopy={onCopyNotice}
                   getTokens={getTokens}
                 />
@@ -832,9 +882,14 @@ function InlineView({
   rows,
   wrap,
   lineNumbers,
-  searchQuery,
+  search,
+  searchTarget,
   activeChangeRowIndex,
   activeChangeEndRowIndex,
+  changeJump,
+  sectionsAtStart,
+  onMergeSection,
+  mergeDisabled,
   onExpandGap,
   onCopyNotice,
   getTokens,
@@ -870,16 +925,20 @@ function InlineView({
           subIndex: 0,
           parentRowIndex: parentIndex,
         });
+        if (search && row.kind === 'equal' && row.oldLine !== row.newLine) {
+          res.push({ row, sign: '', subIndex: 1, parentRowIndex: parentIndex });
+        }
       }
     });
     return res;
-  }, [rows]);
+  }, [rows, search]);
 
   const estimateHeight = useCallback(
     (item: InlineRenderRow) => estimateDiffRowHeight(item.row, wrap, 140),
     [wrap],
   );
   const virtual = useVirtualWindow(expandedRows, scrollRef, estimateHeight);
+  const { scrollToIndex } = virtual;
 
   const firstInlineIndexByParent = useMemo(() => {
     const indexMap = new Map<number, number>();
@@ -894,16 +953,26 @@ function InlineView({
   const jumpToRow = useCallback(
     (rowIndex: number) => {
       const itemIndex = firstInlineIndexByParent.get(rowIndex);
-      if (itemIndex != null) virtual.scrollToIndex(itemIndex);
+      if (itemIndex != null) scrollToIndex(itemIndex);
     },
-    [firstInlineIndexByParent, virtual.scrollToIndex],
+    [firstInlineIndexByParent, scrollToIndex],
   );
 
-  useEffect(() => {
-    if (activeChangeRowIndex == null) return;
+  useRowJump(changeJump, (request) => {
+    if (!('focus' in request) || activeChangeRowIndex == null) return;
     jumpToRow(activeChangeRowIndex);
-    return focusDiffRow(`diff-row-inline-p${activeChangeRowIndex}-0`);
-  }, [activeChangeRowIndex, jumpToRow]);
+    if (request.focus) return focusDiffRow(`diff-row-inline-p${activeChangeRowIndex}-0`);
+  });
+  useRowJump(searchTarget, (request) => {
+    if (!('visibleIndex' in request)) return;
+    const first = firstInlineIndexByParent.get(request.visibleIndex);
+    if (first == null) return;
+    const second = expandedRows[first + 1];
+    const index = request.side === 'new' && second?.parentRowIndex === request.visibleIndex
+      ? first + 1 : first;
+    scrollToIndex(index, 'auto');
+    return revealSearchMark(scrollRef.current);
+  });
 
   const handleCopyLine = (text: string, idx: number, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -934,6 +1003,7 @@ function InlineView({
         Page Down, Home, and End keys.
       </p>
       <div className="diff-col-head diff-col-head--inline">
+        <span className="diff-merge-heading" aria-hidden="true" />
         {lineNumbers && <span className="ln ln--head" title="Original line #" />}
         {lineNumbers && <span className="ln ln--head" title="Changed line #" />}
         <span className="sign sign--head" />
@@ -970,10 +1040,12 @@ function InlineView({
               );
             }
 
-            const oldNum = sign === '+' ? null : row.oldNum;
-            const newNum = sign === '-' ? null : row.newNum;
-            const line = sign === '+' ? row.newLine : row.oldLine;
-            const spans = sign === '+' ? row.newSpans : row.oldSpans;
+            const changedRawEqual = sign === '' && row.oldLine !== row.newLine && !!search;
+            const side: SearchSide = sign === '+' || (changedRawEqual && subIndex === 1) ? 'new' : 'old';
+            const oldNum = side === 'new' ? null : row.oldNum;
+            const newNum = (sign === '-' || (changedRawEqual && side === 'old')) ? null : row.newNum;
+            const line = side === 'new' ? row.newLine : row.oldLine;
+            const spans = side === 'new' ? row.newSpans : row.oldSpans;
             const kind =
               row.kind === 'modified'
                 ? sign === '+'
@@ -1015,6 +1087,8 @@ function InlineView({
                     : ''
                 }`}
               >
+                <RowMergeSlot section={subIndex === 0 ? sectionsAtStart?.get(parentRowIndex) : undefined}
+                  onMerge={onMergeSection} disabled={mergeDisabled} />
                 {lineNumbers && (
                   <span className="ln ln--old">{oldNum ?? ''}</span>
                 )}
@@ -1034,17 +1108,10 @@ function InlineView({
                 </span>
                 <span className="cell group-cell">
                   <span className="cell__text">
-                    {spans && sign !== '' ? (
-                      <SpanText spans={spans} searchQuery={searchQuery} />
-                    ) : getTokens && line != null ? (
-                      <SyntaxText
-                        tokens={getTokens(line)}
-                        line={line}
-                        searchQuery={searchQuery}
-                      />
-                    ) : (
-                      highlightMatches(line ?? '', searchQuery)
-                    )}
+                    <LineText line={line ?? ''} spans={spans}
+                      tokens={!spans && line != null ? getTokens?.(line) : null}
+                      search={search} activeMatch={searchTarget?.visibleIndex === parentRowIndex
+                        && searchTarget.side === side ? searchTarget : undefined} />
                   </span>
                   {line != null && (
                     <button

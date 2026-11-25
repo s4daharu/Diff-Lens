@@ -2,17 +2,20 @@ import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { chromium } from 'playwright';
 
-const PORT = 4173;
+const PORT = Number(process.env.DIFFLENS_TEST_PORT ?? 4173);
 const results = [];
 const check = (name, cond, detail = '') => {
   results.push({ name, ok: !!cond });
   console.log(`${cond ? '  ok   ' : '  FAIL '}${name}${detail ? ' — ' + detail : ''}`);
 };
 
-const preview = spawn('npx', ['vite', 'preview', '--port', String(PORT), '--strictPort'], {
+const preview = spawn(process.execPath, [
+  'node_modules/vite/bin/vite.js', 'preview', '--port', String(PORT), '--strictPort',
+], {
   stdio: 'ignore',
   detached: false,
 });
+process.once('exit', () => preview.kill());
 
 const waitForServer = async (retries = 40) => {
   for (let i = 0; i < retries; i++) {
@@ -34,8 +37,11 @@ try {
   throw err;
 }
 
-const browser = await chromium.launch();
-const page = await browser.newPage();
+const browser = await chromium.launch({
+  executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE,
+});
+const context = await browser.newContext();
+const page = await context.newPage();
 await page.addInitScript(() => {
   window.__diffLensPrintCalls = 0;
   window.print = () => {
@@ -122,8 +128,8 @@ const makeImageFixture = async (
 
 check('no console/page errors on load', errors.length === 0, errors.join(' | '));
 
-const emptyVisible = await page.locator('.empty').isVisible();
-check('empty state visible initially', emptyVisible);
+check('text landing visible initially', await page.getByRole('heading', { name: 'Compare text' }).isVisible());
+check('Image is not rendered below Text', !(await page.locator('.image-compare').isVisible()));
 
 // Landing mode shows the input panels directly
 const landingPanels = await page.locator('.input-panel--left textarea').count();
@@ -132,6 +138,8 @@ check('landing mode shows input panels', landingPanels === 1);
 // Image comparison v1 uses generated fixtures only; no external image service.
 await page.getByRole('button', { name: 'Image', exact: true }).click();
 await page.waitForSelector('.image-compare:not([hidden])');
+check('only Image workspace is visible', await page.getByRole('main').count() === 1
+  && !(await page.locator('.main--landing').isVisible()));
 check(
   'comparison type selector switches to Image',
   (await page.getByRole('button', { name: 'Image', exact: true }).getAttribute(
@@ -342,6 +350,8 @@ check(
 
 await page.getByRole('button', { name: 'Text', exact: true }).click();
 check('switching back to Text restores text landing', await page.locator('.main--landing').isVisible());
+check('switching to Text hides the ready Image workspace', !(await page.locator('.image-compare--ready').isVisible())
+  && await page.getByRole('main').count() === 1);
 await page.getByRole('button', { name: 'Image', exact: true }).click();
 check(
   'image comparison state survives Text/Image mode switching',
@@ -368,6 +378,8 @@ await leftChooser.setFiles({
 await page.waitForTimeout(300);
 check('one uploaded source stays on landing', await page.locator('.main--landing').isVisible());
 check('one uploaded source does not open viewer', (await page.locator('.diff-view').count()) === 0);
+const compareButton = page.getByRole('button', { name: 'Compare', exact: true });
+check('Compare is disabled with only one source', await compareButton.isDisabled());
 
 const rightChooserPromise = page.waitForEvent('filechooser');
 await page.locator('.input-panel--right').getByRole('button', { name: 'Open file' }).click();
@@ -377,8 +389,13 @@ await rightChooser.setFiles({
   mimeType: 'text/plain',
   buffer: Buffer.from('right source\n'),
 });
+await page.waitForFunction(() => ![...document.querySelectorAll('button')]
+  .find((button) => button.textContent === 'Compare')?.disabled);
+check('both uploads stay on the landing until Compare is pressed',
+  await page.locator('.main--landing').isVisible() && (await page.locator('.diff-view').count()) === 0);
+await compareButton.click();
 await page.waitForSelector('.diff-view--side', { timeout: 5000 });
-check('viewer opens after both sources are ready', true);
+check('viewer opens after explicit Compare', true);
 await page.getByRole('button', { name: 'New diff' }).click();
 await page.waitForSelector('.main--landing');
 
@@ -394,6 +411,13 @@ check(
   (await page.getByRole('button', { name: 'Diff details', exact: true }).getAttribute('aria-expanded')) === 'false',
 );
 check('toolbar visible', await page.locator('.diff-toolbar').isVisible());
+const changeNav = page.getByRole('group', { name: 'Change navigation', exact: true });
+await changeNav.getByRole('button', { name: 'Next change', exact: true }).click();
+check('toolbar can navigate changes without opening Details',
+  (await changeNav.getByRole('status').textContent())?.includes('1 /') &&
+  (await page.locator('.diff-row--active').count()) > 0);
+check('merge buttons are available next to changes',
+  (await page.locator('.diff-view .diff-merge-slot button').count()) > 0);
 
 await page.getByRole('button', { name: 'Export options' }).click();
 await page
@@ -552,7 +576,7 @@ await page.waitForTimeout(600);
 // ignore case option
 await openSidebarOptions();
 
-// open the source editor drawer to edit texts
+// Edit in the dock while the diff remains visible.
 const editSources = () => page.getByRole('button', { name: 'Edit sources' }).click();
 const closeEditor = () =>
   page.getByRole('button', { name: 'Done', exact: true }).click();
@@ -567,16 +591,18 @@ check(
   'source editor initially focuses original text',
   await ta.evaluate((textarea) => document.activeElement === textarea),
 );
-await page.keyboard.press('Shift+Tab');
 check(
-  'source editor keeps keyboard focus inside the dialog',
-  await page.locator('.source-editor').evaluate(
-    (dialog) => dialog.contains(document.activeElement),
-  ),
+  'source editor is docked and does not block the result',
+  await page.locator('.diff-view').isVisible() &&
+  !(await page.locator('.source-editor').getAttribute('aria-modal')),
 );
 await ta.focus();
 await ta.fill('HELLO WORLD\nsecond line\nthird line\n');
 await ta2.fill('hello world\nsecond line\nthird line\n');
+await ta2.evaluate((textarea) => textarea.setSelectionRange(5, 5));
+await page.waitForSelector('.diff-view .diff-row--deleted:has-text("HELLO WORLD")');
+check('live recomputation preserves editor focus and caret',
+  await ta2.evaluate((textarea) => document.activeElement === textarea && textarea.selectionStart === 5));
 await closeEditor();
 await page.waitForTimeout(800);
 check(
@@ -826,6 +852,23 @@ check(
   virtualMetrics.scrollHeight > virtualMetrics.clientHeight * 20,
   JSON.stringify(virtualMetrics),
 );
+await page.getByRole('button', { name: 'Find in diff', exact: true }).click();
+const searchField = page.getByRole('textbox', { name: 'Search within diff' });
+await searchField.fill('row 2499');
+const searchStatus = page.getByRole('search', { name: 'Find in diff' }).getByRole('status');
+check('search counts off-screen matches without double-counting unchanged lines',
+  (await searchStatus.textContent())?.includes('11 matches'));
+await searchField.press('Shift+Enter');
+await page.waitForSelector('.search-match--active');
+check('previous search wraps to the last virtualized match',
+  (await searchStatus.textContent())?.includes('11 / 11') &&
+  (await page.locator('.search-match--active').first().evaluate(
+    (el) => el.closest('.cell__text')?.textContent,
+  )) === 'row 24999');
+await searchField.press('Enter');
+check('next search wraps to the first match', (await searchStatus.textContent())?.includes('1 / 11'));
+await searchField.press('Escape');
+
 await page.locator('.diff-scroll').evaluate((el) => {
   el.scrollTop = el.scrollHeight;
   el.dispatchEvent(new Event('scroll'));
@@ -841,6 +884,19 @@ check(
   'render-all escape hatch is no longer needed',
   (await page.getByRole('button', { name: 'Render all' }).count()) === 0,
 );
+
+await editSources();
+const scrollBeforeEdit = await page.locator('.diff-scroll').evaluate((el) => {
+  el.scrollTop = 14000;
+  return el.scrollTop;
+});
+await ta2.evaluate((textarea) => textarea.setSelectionRange(0, 0));
+await ta2.press('Home');
+await page.keyboard.insertText('updated ');
+await page.waitForFunction(() => document.querySelector('.diff-change-nav [role=status]')?.textContent === '1 change');
+check('live editing keeps the long diff at its current scroll position',
+  Math.abs(await page.locator('.diff-scroll').evaluate((el) => el.scrollTop) - scrollBeforeEdit) < 60);
+await closeEditor();
 
 // uploaded file name appears in the patch header
 await editSources();
@@ -904,7 +960,7 @@ await page.waitForTimeout(300);
 const matchesCount = await page.locator('.search-match').count();
 check('search matches highlighted', matchesCount > 0, `matches=${matchesCount}`);
 await page.locator('.diff-search-clear').click();
-await page.getByRole('button', { name: 'Close', exact: true }).click();
+await page.getByRole('button', { name: 'Close search', exact: true }).click();
 
 // section merge actions, repeated recomputation, and undo/redo
 await page.getByRole('button', { name: 'New diff' }).click();
@@ -915,21 +971,22 @@ const mergeChanged =
   'new first\nkeep\nnew one\nnew two\nanchor\nnew last';
 await page.locator('.input-panel--left textarea').fill(mergeOriginal);
 await page.locator('.input-panel--right textarea').fill(mergeChanged);
+await compareButton.click();
 await page.waitForSelector('.diff-view--side', { timeout: 5000 });
-await ensureSidebarOpen();
-await page.waitForSelector('.change-item', { timeout: 5000 });
 
 await page
-  .locator('.change-item-row')
+  .locator('.diff-view .diff-merge-slot .merge-actions')
   .first()
   .getByRole('button', { name: /Apply Original .* to Changed/ })
   .click();
 await page.waitForTimeout(650);
 check(
-  'Original to Changed resolves a beginning section',
-  (await page.locator('.change-item-row').count()) === 2,
+  'inline Original to Changed resolves a beginning section without Details',
+  (await page.locator('.diff-view .diff-merge-slot .merge-actions').count()) === 2 &&
+    (await page.locator('.diff-sidebar').count()) === 0,
 );
 
+await ensureSidebarOpen();
 await page
   .locator('.change-item-row')
   .first()
@@ -1001,6 +1058,7 @@ const moveNew = [
 ].join('\n');
 await page.locator('.input-panel--left textarea').fill(moveOld);
 await page.locator('.input-panel--right textarea').fill(moveNew);
+await compareButton.click();
 await page.waitForSelector('.diff-row--moved-from', { timeout: 5000 });
 check(
   'moved block gets distinct from/to rows',
@@ -1160,7 +1218,7 @@ await page.getByLabel('Enable ignore rule 1').check();
 
 const sessionDownloadPromise = page.waitForEvent('download');
 await page.getByRole('button', { name: 'Export options' }).click();
-await page.getByRole('menuitem', { name: 'Save comparison session' }).click();
+await page.getByRole('menuitem', { name: 'Export comparison session' }).click();
 const sessionDialog = page.getByRole('dialog', { name: 'Save comparison session' });
 await sessionDialog.getByLabel('Session name').fill('API Review');
 await sessionDialog.getByRole('button', { name: 'Save session', exact: true }).click();
@@ -1325,6 +1383,152 @@ check(
   'invalid session import reports unsupported version',
   (await page.locator('.toast').textContent())?.includes('unsupported version 999'),
 );
+
+// On-device saved comparisons: create, autosave, reopen after reload, rename, save manually and delete.
+const savedButton = page.getByRole('button', { name: 'Saved comparisons' });
+await savedButton.click();
+const savedDialog = page.getByRole('dialog', { name: 'Saved comparisons' });
+await savedDialog.getByLabel('New comparison name').fill('Local comparison');
+await savedDialog.getByLabel('Automatically save edits').check();
+await savedDialog.getByRole('button', { name: 'Save as new comparison' }).click();
+await savedDialog.waitFor({ state: 'hidden' });
+check('saved comparison has a workspace name without downloading',
+  (await page.locator('.sources-session-name').textContent())?.includes('Local comparison'));
+await editSources();
+await ta2.fill('Autorecovered changed text\n');
+await page.getByRole('button', { name: 'New diff' }).click();
+await page.locator('.main--landing').waitFor();
+await page.reload({ waitUntil: 'networkidle' });
+await page.locator('.main--landing').waitFor();
+await savedButton.click();
+await savedDialog.getByRole('button', { name: 'Open Local comparison' }).click();
+await page.locator('.diff-view--inline').waitFor();
+await editSources();
+check('reopening an autosaved comparison after reload restores its edits and view',
+  (await ta2.inputValue()) === 'Autorecovered changed text\n', (await ta2.inputValue()).slice(0, 40));
+await closeEditor();
+await savedButton.click();
+await savedDialog.getByRole('button', { name: 'Rename', exact: true }).click();
+await savedDialog.getByLabel('Rename comparison').fill('Renamed comparison');
+await savedDialog.getByRole('button', { name: 'Save name' }).click();
+await savedDialog.getByRole('button', { name: 'Open Renamed comparison' }).waitFor();
+await savedDialog.getByLabel('Autosave edits', { exact: true }).uncheck();
+await savedDialog.getByRole('button', { name: 'Close saved comparisons' }).click();
+await editSources();
+await ta2.fill('Manually saved changed text\n');
+await closeEditor();
+await savedButton.click();
+await savedDialog.getByRole('button', { name: 'Save changes' }).click();
+await savedDialog.waitFor({ state: 'hidden' });
+await editSources();
+await ta2.fill('Unsaved edit');
+await page.getByRole('button', { name: 'New diff' }).click();
+await savedButton.click();
+await savedDialog.getByRole('button', { name: 'Open Renamed comparison' }).click();
+await editSources();
+check('autosave can be disabled and manual updates remain saved',
+  (await ta2.inputValue()) === 'Manually saved changed text\n');
+await closeEditor();
+await savedButton.click();
+await savedDialog.getByRole('button', { name: 'Delete', exact: true }).click();
+await savedDialog.getByRole('button', { name: 'Confirm delete' }).click();
+await savedDialog.getByText('No comparisons saved yet.').waitFor();
+await page.keyboard.press('Escape');
+check('deleting the saved copy leaves the open comparison in the editor',
+  await page.locator('.main--workspace').isVisible());
+
+await savedButton.click();
+await savedDialog.getByLabel('New comparison name').fill('Multi-tab comparison');
+await savedDialog.getByLabel('Automatically save edits').check();
+await savedDialog.getByRole('button', { name: 'Save as new comparison' }).click();
+await savedDialog.waitFor({ state: 'hidden' });
+const otherTab = await context.newPage();
+await otherTab.goto(`http://localhost:${PORT}/`);
+await otherTab.getByRole('button', { name: 'Saved comparisons' }).click();
+await otherTab.getByRole('button', { name: 'Open Multi-tab comparison' }).click();
+await otherTab.getByRole('button', { name: 'Edit sources' }).click();
+await otherTab.getByRole('textbox', { name: 'Changed text' }).fill('Newer change from another tab');
+await otherTab.getByRole('button', { name: 'New diff' }).click();
+await otherTab.locator('.main--landing').waitFor();
+await otherTab.close();
+await editSources();
+await ta2.fill('Working change in a stale tab');
+await page.getByRole('button', { name: 'New diff' }).click();
+await page.locator('.toast').filter({ hasText: 'changed in another tab' }).waitFor();
+check('a conflicting autosave does not clear the working copy',
+  (await ta2.inputValue()) === 'Working change in a stale tab');
+await savedButton.click();
+await savedDialog.getByRole('button', { name: 'Open Multi-tab comparison' }).click();
+await editSources();
+check('a stale tab cannot overwrite a newer saved comparison',
+  (await ta2.inputValue()) === 'Newer change from another tab');
+await closeEditor();
+
+// A superseded worker job must not delay or replace the newly requested comparison.
+const workerPage = await browser.newPage();
+await workerPage.addInitScript(() => {
+  const NativeWorker = window.Worker;
+  let created = 0;
+  window.Worker = class extends NativeWorker {
+    constructor(...args) {
+      super(...args);
+      this.first = ++created === 1;
+    }
+    postMessage(...args) {
+      if (this.first) {
+        window.__testObsoleteRequestStarted = true;
+        return;
+      }
+      super.postMessage(...args);
+    }
+    terminate() {
+      if (this.first) window.__testObsoleteRequestCancelled = true;
+      super.terminate();
+    }
+  };
+});
+await workerPage.goto(`http://localhost:${PORT}/`);
+await workerPage.getByRole('textbox', { name: 'Original text' }).fill('old source');
+await workerPage.getByRole('textbox', { name: 'Changed text' }).fill('first revision');
+await workerPage.getByRole('button', { name: 'Compare', exact: true }).click();
+await workerPage.waitForFunction(() => window.__testObsoleteRequestStarted);
+await workerPage.getByRole('button', { name: 'Edit sources' }).click();
+await workerPage.getByRole('textbox', { name: 'Changed text' }).fill('second revision');
+await workerPage.locator('.diff-view .cell__text').filter({ hasText: 'second revision' }).waitFor({ timeout: 5000 });
+check('live editing cancels an obsolete active worker request',
+  await workerPage.evaluate(() => window.__testObsoleteRequestCancelled === true));
+await workerPage.close();
+
+// Check the narrow layout, text entry and a search hit inside hidden context.
+const mobile = await browser.newPage({ viewport: { width: 390, height: 844 } });
+await mobile.goto(`http://localhost:${PORT}/`);
+const mobileOriginal = mobile.getByRole('textbox', { name: 'Original text' });
+const mobileChanged = mobile.getByRole('textbox', { name: 'Changed text' });
+await mobileOriginal.fill('text before\nhidden needle\nanchor\noriginal change');
+await mobileChanged.fill('text before\nhidden needle\nanchor\n');
+await mobileChanged.pressSequentially('revised change');
+check('narrow text entry remains open after both sources have text',
+  (await mobileChanged.inputValue()).endsWith('revised change') &&
+    !(await mobile.locator('.diff-view').isVisible()));
+await mobile.getByRole('button', { name: 'Compare', exact: true }).click();
+await mobile.locator('.diff-view').waitFor();
+await mobile.getByRole('button', { name: 'View options' }).click();
+await mobile.getByRole('menuitemcheckbox', { name: 'Hide unchanged lines' }).click();
+await mobile.locator('.diff-row--gap').waitFor();
+await mobile.getByRole('button', { name: 'Find in diff', exact: true }).click();
+const mobileSearch = mobile.getByRole('textbox', { name: 'Search within diff' });
+await mobileSearch.fill('hidden needle');
+check('hidden context is included in the match count', (await mobile.getByRole('search')
+  .getByRole('status').textContent()) === '1 match' && !(await mobile.locator('.search-match').count()));
+await mobileSearch.press('Enter');
+await mobile.locator('.search-match--active').waitFor();
+check('search reveals only the matching hidden line while keeping other context collapsed',
+  (await mobile.locator('.search-match--active').textContent()) === 'hidden needle' &&
+    (await mobile.locator('.diff-row--gap').count()) > 0);
+check('opening the search bar and jumping does not widen the narrow layout',
+  await mobile.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+await mobileSearch.press('Escape');
+await mobile.close();
 
 check('no errors accumulated', errors.length === 0, errors.join(' | '));
 

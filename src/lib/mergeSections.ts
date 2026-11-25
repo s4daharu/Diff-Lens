@@ -65,7 +65,7 @@ function applyLineEdits(
   targetText: string,
   edits: LineEdit[],
 ): string {
-  const source = parseLines(sourceText);
+  let source = parseLines(sourceText);
   const target = parseLines(targetText);
   const ordered = [...edits].sort(
     (a, b) => b.sourceStart - a.sourceStart || b.sourceEnd - a.sourceEnd,
@@ -88,16 +88,15 @@ function applyLineEdits(
     }
 
     const replacement = cloneLines(target, edit.targetStart, edit.targetEnd);
-    source.splice(
-      edit.sourceStart,
-      edit.sourceEnd - edit.sourceStart,
-      ...replacement,
-    );
+    source = source.slice(0, edit.sourceStart).concat(replacement, source.slice(edit.sourceEnd));
 
     if (edit.sourceStart > 0 && edit.targetStart > 0) {
       const previousTarget = target[edit.targetStart - 1];
       const previousSource = source[edit.sourceStart - 1];
-      if (previousSource && previousTarget) {
+      if (previousSource && previousTarget && (
+        (!previousSource.eol && edit.sourceStart < source.length) ||
+        (edit.sourceStart === source.length && edit.targetStart === target.length)
+      )) {
         previousSource.eol = previousTarget.eol;
       }
     }

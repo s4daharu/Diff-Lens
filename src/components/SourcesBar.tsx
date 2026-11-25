@@ -80,12 +80,12 @@ export function SourcesBar({
           className="btn btn--small"
           onClick={onEdit}
           title="Edit original and changed text (Ctrl+E)"
-          aria-haspopup="dialog"
           aria-expanded={editorOpen}
-          aria-controls="source-editor-dialog"
+          aria-controls={editorOpen ? 'source-editor' : undefined}
+          data-edit-sources
         >
           <PencilIcon size={14} />
-          <span className="btn__label">Edit sources</span>
+          <span>Edit sources</span>
         </button>
       </div>
     </div>

@@ -19,6 +19,7 @@ interface HeaderProps {
   onSelectPreset?: (preset: SamplePreset) => void;
   onOpenShortcuts?: () => void;
   onImportSession?: (file: File) => void;
+  onShowSaved?: () => void;
 }
 
 export function Header({
@@ -31,6 +32,7 @@ export function Header({
   onSelectPreset,
   onOpenShortcuts,
   onImportSession,
+  onShowSaved,
 }: HeaderProps) {
   const [samplesOpen, setSamplesOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -108,6 +110,13 @@ export function Header({
           <span className="header__busy" role="status" aria-live="polite">
             Comparing…
           </span>
+        )}
+
+        {onShowSaved && (
+          <button type="button" className="btn btn--ghost"
+            onClick={onShowSaved} aria-haspopup="dialog" aria-label="Saved comparisons">
+            Saved
+          </button>
         )}
 
         {onSelectPreset && (
@@ -192,6 +201,7 @@ export function Header({
           className="btn btn--ghost"
           onClick={onToggleTheme}
           title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
         >
           {theme === 'dark' ? <SunIcon size={17} /> : <MoonIcon size={17} />}
           <span className="btn__label">{theme === 'dark' ? 'Light' : 'Dark'}</span>

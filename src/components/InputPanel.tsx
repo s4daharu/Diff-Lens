@@ -169,6 +169,7 @@ export function InputPanel({
               className="btn btn--small"
               onClick={() => fileRef.current?.click()}
               title="Open file from disk"
+              aria-label="Open file"
             >
               <UploadIcon size={14} />
               <span className="btn__label">Open file</span>

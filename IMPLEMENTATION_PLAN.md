@@ -24,18 +24,12 @@ Reviewed on 2026-11-12 against:
 - https://www.diffchecker.com/image-compare/
 - https://www.diffchecker.com/desktop/
 
-DiffLens already covers much of Diffchecker's core text workflow: side-by-side and unified views, word/character granularity, syntax highlighting, live source editing, whitespace/case/line-ending controls, hidden unchanged lines, line wrapping, large-file rendering, local persistence, and local named sessions.
+DiffLens already covers much of Diffchecker's core text workflow, including Smart precision, custom ignore rules, live editing, section merge with undo, and local PDF reporting.
 
-The most valuable missing features that still fit DiffLens's privacy-first/browser-only architecture are:
-1. custom ignore rules;
-2. smart per-change diff precision;
-3. moved-block detection;
-4. per-section merge/accept actions with undo;
-5. PDF-quality report export;
-6. image comparison;
-7. structured spreadsheet comparison.
+The next major comparison type is structured spreadsheet comparison. Image alignment,
+region previews, and flicker mode are follow-up improvements to the existing image workspace.
 
-Cloud sharing, inline comments, accounts, and cloud AI summaries are intentionally not near-term priorities because they require server-side storage or processing and would weaken the current privacy promise.
+Cloud sharing, collaborative inline comments, accounts, and cloud AI summaries are intentionally not near-term priorities. The on-device comparison library provides reopen and optional autosave without a backend.
 
 ## Planned milestones
 
@@ -134,6 +128,16 @@ Deferred from image v1:
 Acceptance:
 - Two screenshots can be compared entirely offline with slider/fade/subtract/highlight views and a navigable region list.
 - A visual diff can be exported as PNG.
+
+### Text workspace follow-up ✅
+
+- [x] Show only the active text or image workspace, including after switching modes.
+- [x] Keep both text inputs editable until **Compare** is pressed; keep live
+  updates in a nonmodal, docked editor afterward.
+- [x] Surface change navigation and bidirectional merge arrows in the result.
+- [x] Count and navigate all search matches, revealing individual hidden lines.
+- [x] Save, reopen, rename, and delete comparisons locally with optional autosave,
+  while retaining portable `.difflens.json` import and export.
 
 ### Milestone 6 — Structured spreadsheet comparison
 

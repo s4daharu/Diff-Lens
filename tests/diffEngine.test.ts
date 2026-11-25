@@ -10,12 +10,14 @@ import {
   applyTextTransform,
   hasNoNewlineAtEof,
   chooseSmartGranularity,
+  formatMarkdownPatch,
 } from '../src/lib/diffEngine';
 import { validateIgnoreRule } from '../src/lib/ignoreRules';
-import type { DiffOptions } from '../src/lib/types';
+import type { DiffOptions, DiffRow } from '../src/lib/types';
 import { applyPatch } from 'diff';
 import { buildVirtualOffsets, findVirtualIndex, getVirtualRange } from '../src/lib/virtualRows';
 import { buildChangeSections } from '../src/lib/changeSections';
+import { createLineSearch, indexDiffMatches } from '../src/lib/diffSearch';
 import { mergeChangeSections } from '../src/lib/mergeSections';
 import {
   describeReportOptions,
@@ -24,6 +26,7 @@ import {
 import {
   IMAGE_TILE_SIZE,
   MAX_IMAGE_REGIONS,
+  assertImageSize,
   comparePixelBuffers,
 } from '../src/lib/imageDiff';
 import {
@@ -71,6 +74,30 @@ console.log('--- basic modification ---');
   check('modified old/new content', modified[0].oldLine === 'b' && modified[0].newLine === 'B', modified[0]);
   check('old numbers sequential', r.rows.map((x) => x.oldNum).join(',') === '1,2,3,4,5');
   check('new numbers sequential', r.rows.map((x) => x.newNum).join(',') === '1,2,3,4,5');
+}
+
+console.log('--- full-result diff search ---');
+{
+  const { rows } = computeDiff(
+    'same [A]\nold [A] [a]\nBULK\nkeep',
+    'same [A]\nnew [A]\nbulk\nkeep',
+    { ...base, ignoreCase: true },
+  );
+  const search = indexDiffMatches(rows, createLineSearch(' [a] '));
+  check('search is literal, case insensitive, and counts unchanged text once', search.count === 4);
+  check('one line can contain multiple ordered matches',
+    search.at(1)?.start === 4 && search.at(2)?.start === 8);
+  check('search visits Original and Changed for a modified row',
+    search.at(2)?.side === 'old' && search.at(3)?.side === 'new');
+  check('out-of-range search ordinals do not resolve', search.at(-1) === null && search.at(4) === null);
+  const rawEqual = indexDiffMatches(rows, createLineSearch('bulk'));
+  check('different raw text on an ignored row remains searchable from both sides',
+    rawEqual.count === 2 && rawEqual.at(1)?.side === 'new');
+  const context = applyContext(rows, 0, null, rawEqual.at(1)?.rowIndex);
+  check('search can reveal one hidden row without expanding the whole gap',
+    context.includes(rows[2]) && !context.includes(rows[3]) && context.some((row) => row.kind === 'gap'));
+  const unicode = [...(createLineSearch('A')?.('İ A') ?? [])];
+  check('search offsets still index the original Unicode text', unicode[0]?.start === 2);
 }
 
 console.log('--- pure addition at end ---');
@@ -304,6 +331,31 @@ console.log('--- patch with context=1 ---');
   check('two hunks', (patch.match(/@@/g) ?? []).length === 4, patch);
   check('first hunk -2,3 +2,3', patch.includes('@@ -2,3 +2,3 @@'), patch);
   check('second hunk -6,3 +6,3', patch.includes('@@ -6,3 +6,3 @@'), patch);
+}
+
+console.log('--- large context and export edge cases ---');
+{
+  const count = 160_000;
+  const rows = Array.from({ length: count }, (_, i): DiffRow => ({
+    kind: i % 1000 === 0 ? 'modified' : 'equal',
+    oldLine: `line ${i}`,
+    newLine: i % 1000 === 0 ? `modified ${i}` : `line ${i}`,
+    oldNum: i + 1,
+    newNum: i + 1,
+  }));
+  const patch = buildUnifiedPatch(rows, count, 'before\npart.txt', 'after\tpart.txt');
+  check('large overlapping context windows and a very long hunk export successfully',
+    patch.includes(`@@ -1,${count} +1,${count} @@`) && patch.endsWith(` line ${count - 1}\n`));
+  check('patch file labels cannot add header lines or timestamps',
+    patch.startsWith('--- before part.txt\n+++ after part.txt\n'));
+  check('Markdown fences survive embedded fences and preserve trailing whitespace',
+    formatMarkdownPatch(' ```\n+value  \n') === '~~~diff\n ```\n+value  \n~~~\n');
+  const source = 'header\nfooter';
+  const target = `header\n${'inserted\n'.repeat(count)}footer`;
+  const sections = buildChangeSections(computeDiff(source, target, base).rows);
+  check('very large inserted sections merge without overflowing the call argument limit',
+    sections.length === 1 &&
+      mergeChangeSections(source, target, sections, 'changed-to-original').oldText === target);
 }
 
 console.log('--- countLines & countWords ---');
@@ -684,6 +736,13 @@ console.log('--- section merge operations ---');
     crlfRejected.newText === crlfOld,
     crlfRejected.newText,
   );
+  const mixedEndings = 'one\ntwo new\nthree\n';
+  const mixedSection = buildChangeSections(
+    computeDiff(crlfOld, mixedEndings, { ...base, ignoreLineEndings: true }).rows,
+  )[0];
+  check('merge leaves ignored line-ending changes on neighbouring lines untouched',
+    mergeChangeSections(crlfOld, mixedEndings, [mixedSection], 'changed-to-original').oldText ===
+      'one\r\ntwo new\nthree\r\n');
 
   const multiOld = 'top\nold a\nold b\nbottom\n';
   const multiNew = 'top\nnew a\nnew b\nbottom\n';
@@ -822,6 +881,18 @@ console.log('--- printable report metadata ---');
 }
 
 console.log('--- image diff engine ---');
+{
+  assertImageSize(4096, 4096);
+  let rejected = false;
+  try {
+    const empty = new Uint8ClampedArray(0);
+    comparePixelBuffers({ data: empty, width: 8192, height: 1 },
+      { data: empty, width: 1, height: 8192 }, 0, false);
+  } catch (error) {
+    rejected = error instanceof Error && error.message.includes('combined comparison canvas');
+  }
+  check('oversized combined image canvas is rejected before allocating pixels', rejected);
+}
 {
   const pixels = (
     width: number,

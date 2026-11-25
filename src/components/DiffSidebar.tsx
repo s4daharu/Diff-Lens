@@ -11,6 +11,7 @@ import {
 } from '../lib/ignoreRules';
 import type { ChangeSection, ChangeSectionKind } from '../lib/changeSections';
 import type { MergeDirection } from '../lib/mergeSections';
+import { MergeButtons } from './MergeButtons';
 import { Checkbox, Select } from './OptionControls';
 import {
   CheckIcon,
@@ -35,6 +36,7 @@ interface DiffSidebarProps {
   onJumpToMovePair: (rowIndex: number) => void;
   currentSection: ChangeSection | null;
   onMergeSection: (rowIndex: number, direction: MergeDirection) => void;
+  mergeDisabled: boolean;
   sections: ChangeSection[];
   hiddenSections: number;
   activeSectionStartRow: number | null;
@@ -69,69 +71,6 @@ function sectionLabel(entry: ChangeSection): string {
   if (entry.moveRole === 'from') return 'Moved from';
   if (entry.moveRole === 'to') return 'Moved to';
   return KIND_LABELS[entry.kind];
-}
-
-function mergeRangeLabel(
-  entry: ChangeSection,
-  side: 'old' | 'new',
-): string {
-  const start = side === 'old' ? entry.oldStartLine : entry.newStartLine;
-  const end = side === 'old' ? entry.oldEndLine : entry.newEndLine;
-  if (start === end) {
-    return start === 0 ? 'before line 1' : `after line ${start}`;
-  }
-  return end === start + 1
-    ? `line ${start + 1}`
-    : `lines ${start + 1} through ${end}`;
-}
-
-function mergeAriaLabel(
-  entry: ChangeSection,
-  direction: MergeDirection,
-): string {
-  const moved = entry.moveId != null ? ' moved pair' : '';
-  return direction === 'changed-to-original'
-    ? `Apply Changed ${mergeRangeLabel(entry, 'new')} to Original ${mergeRangeLabel(entry, 'old')}${moved}`
-    : `Apply Original ${mergeRangeLabel(entry, 'old')} to Changed ${mergeRangeLabel(entry, 'new')}${moved}`;
-}
-
-function MergeButtons({
-  entry,
-  onMerge,
-  compact = false,
-}: {
-  entry: ChangeSection;
-  onMerge: (rowIndex: number, direction: MergeDirection) => void;
-  compact?: boolean;
-}) {
-  return (
-    <div
-      className={`merge-actions${compact ? ' merge-actions--compact' : ''}`}
-      role="group"
-      aria-label="Merge this change section"
-    >
-      <button
-        type="button"
-        className="merge-action-btn"
-        onClick={() => onMerge(entry.rowIndex, 'changed-to-original')}
-        title="Apply Changed → Original"
-        aria-label={mergeAriaLabel(entry, 'changed-to-original')}
-      >
-        <span aria-hidden="true">←</span>
-        {!compact && <span>Changed → Original</span>}
-      </button>
-      <button
-        type="button"
-        className="merge-action-btn"
-        onClick={() => onMerge(entry.rowIndex, 'original-to-changed')}
-        title="Apply Original → Changed"
-        aria-label={mergeAriaLabel(entry, 'original-to-changed')}
-      >
-        {!compact && <span>Original → Changed</span>}
-        <span aria-hidden="true">→</span>
-      </button>
-    </div>
-  );
 }
 
 function IgnoreRuleEditor({
@@ -259,6 +198,7 @@ export function DiffSidebar({
   onJumpToMovePair,
   currentSection,
   onMergeSection,
+  mergeDisabled,
   sections,
   hiddenSections,
   activeSectionStartRow,
@@ -439,6 +379,7 @@ export function DiffSidebar({
                     Resolve current section
                   </span>
                   <MergeButtons
+                    disabled={mergeDisabled}
                     entry={currentSection}
                     onMerge={onMergeSection}
                   />
@@ -526,6 +467,7 @@ export function DiffSidebar({
                           </span>
                         </button>
                         <MergeButtons
+                          disabled={mergeDisabled}
                           entry={entry}
                           onMerge={onMergeSection}
                           compact

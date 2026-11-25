@@ -8,6 +8,7 @@ import {
   type PointerEvent,
 } from 'react';
 import {
+  assertImageSize,
   comparePixelBuffers,
   type ImageChangeRegion,
   type ImageDiffResult,
@@ -91,6 +92,7 @@ async function decodeImage(file: File): Promise<LoadedImage> {
 
   const bitmap = await createImageBitmap(file);
   try {
+    assertImageSize(bitmap.width, bitmap.height);
     return {
       file,
       url: URL.createObjectURL(file),
@@ -108,6 +110,7 @@ async function decodeImage(file: File): Promise<LoadedImage> {
 async function pixelsOnMain(file: File) {
   const bitmap = await createImageBitmap(file);
   try {
+    assertImageSize(bitmap.width, bitmap.height);
     const canvas = document.createElement('canvas');
     canvas.width = bitmap.width;
     canvas.height = bitmap.height;
@@ -350,6 +353,7 @@ export function ImageComparison({
     null,
   );
   const requestIdRef = useRef(0);
+  const loadIdRef = useRef({ original: 0, changed: 0 });
   const originalRef = useRef<LoadedImage | null>(null);
   const changedRef = useRef<LoadedImage | null>(null);
   const primaryViewportRef = useRef<HTMLDivElement>(null);
@@ -370,6 +374,8 @@ export function ImageComparison({
 
   useEffect(
     () => () => {
+      loadIdRef.current.original++;
+      loadIdRef.current.changed++;
       if (originalRef.current) URL.revokeObjectURL(originalRef.current.url);
       if (changedRef.current) URL.revokeObjectURL(changedRef.current.url);
     },
@@ -381,6 +387,7 @@ export function ImageComparison({
   }, [busy, onBusyChange]);
 
   const clearSource = useCallback((side: 'original' | 'changed') => {
+    loadIdRef.current[side]++;
     const setter = side === 'original' ? setOriginal : setChanged;
     setter((current) => {
       if (current) URL.revokeObjectURL(current.url);
@@ -405,8 +412,13 @@ export function ImageComparison({
 
   const loadSource = useCallback(
     async (side: 'original' | 'changed', file: File) => {
+      const id = ++loadIdRef.current[side];
       try {
         const decoded = await decodeImage(file);
+        if (loadIdRef.current[side] !== id) {
+          URL.revokeObjectURL(decoded.url);
+          return;
+        }
         const setter = side === 'original' ? setOriginal : setChanged;
         setter((current) => {
           if (current) URL.revokeObjectURL(current.url);
@@ -414,8 +426,10 @@ export function ImageComparison({
         });
         setPan({ x: 0, y: 0 });
         setZoom(1);
+        setResult(null);
         setActiveRegionIndex(null);
       } catch (error) {
+        if (loadIdRef.current[side] !== id) return;
         onError(
           error instanceof Error ? error.message : 'Could not read image.',
         );
@@ -425,6 +439,8 @@ export function ImageComparison({
   );
 
   const swapSources = useCallback(() => {
+    loadIdRef.current.original++;
+    loadIdRef.current.changed++;
     setOriginal(changed);
     setChanged(original);
     setPan({ x: 0, y: 0 });
@@ -434,6 +450,15 @@ export function ImageComparison({
   useEffect(() => {
     if (!active || !original || !changed) {
       setBusy(false);
+      return;
+    }
+
+    try {
+      assertImageSize(Math.max(original.width, changed.width), Math.max(original.height, changed.height));
+    } catch (error) {
+      setResult(null);
+      setBusy(false);
+      onError(error instanceof Error ? error.message : 'The image comparison is too large.');
       return;
     }
 
@@ -477,10 +502,13 @@ export function ImageComparison({
       };
     }
 
-    const worker = new Worker(
-      new URL('../imageDiffWorker.ts', import.meta.url),
-      { type: 'module' },
-    );
+    let worker: Worker;
+    try {
+      worker = new Worker(new URL('../imageDiffWorker.ts', import.meta.url), { type: 'module' });
+    } catch {
+      void runFallback();
+      return () => { cancelled = true; };
+    }
     worker.onmessage = (event: MessageEvent<ImageWorkerResponse>) => {
       if (cancelled || id !== requestIdRef.current) return;
       if (!event.data.ok || !event.data.result) {

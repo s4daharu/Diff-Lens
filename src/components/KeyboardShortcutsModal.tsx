@@ -11,13 +11,14 @@ const SHORTCUTS = [
   { key: 'Ctrl / ⌘ + 2', desc: 'Switch to Inline unified view' },
   { key: 'Ctrl / ⌘ + S', desc: 'Download .patch file' },
   { key: 'Ctrl / ⌘ + F', desc: 'Find within diff' },
-  { key: 'Ctrl / ⌘ + E', desc: 'Open the source editor (edit both texts)' },
+  { key: 'Ctrl / ⌘ + E', desc: 'Open or focus the docked source editor' },
+  { key: 'Enter / Shift + Enter', desc: 'Next / previous match while searching' },
   { key: 'Ctrl / ⌘ + Z', desc: 'Undo last section merge' },
   { key: 'Ctrl / ⌘ + Shift + Z / Y', desc: 'Redo section merge' },
   { key: 'Alt + N / Alt + ↓', desc: 'Jump to next change section' },
   { key: 'Alt + P / Alt + ↑', desc: 'Jump to previous change section' },
   { key: '?', desc: 'Toggle keyboard shortcuts help' },
-  { key: 'Esc', desc: 'Close dialogs / search' },
+  { key: 'Esc', desc: 'Close dialogs, search, or the source editor' },
 ];
 
 export function KeyboardShortcutsModal({

@@ -5,6 +5,8 @@ import {
   CopyIcon,
   DownloadIcon,
   CheckIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
   FileCodeIcon,
   HashIcon,
   ListIcon,
@@ -29,6 +31,14 @@ interface DiffToolbarProps {
   onToggleSearch: () => void;
   searchQuery: string;
   onSearchChange: (q: string) => void;
+  searchCount: number;
+  searchOrdinal: number | null;
+  onSearchNext: () => void;
+  onSearchPrev: () => void;
+  changeCount: number;
+  changeOrdinal: number | null;
+  onNextChange: () => void;
+  onPrevChange: () => void;
   onCopyPatch: () => void;
   onDownloadPatch: () => void;
   onCopyMarkdown: () => void;
@@ -62,6 +72,14 @@ export function DiffToolbar({
   onToggleSearch,
   searchQuery,
   onSearchChange,
+  searchCount,
+  searchOrdinal,
+  onSearchNext,
+  onSearchPrev,
+  changeCount,
+  changeOrdinal,
+  onNextChange,
+  onPrevChange,
   onCopyPatch,
   onDownloadPatch,
   onCopyMarkdown,
@@ -80,6 +98,19 @@ export function DiffToolbar({
   const [openMenu, setOpenMenu] = useState<'view' | 'export' | null>(null);
   const viewMenuRef = useRef<HTMLDivElement>(null);
   const exportMenuRef = useRef<HTMLDivElement>(null);
+  const searchButton = useRef<HTMLButtonElement>(null);
+  const searchInput = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (searchOpen) {
+      searchInput.current?.focus({ preventScroll: true });
+    }
+  }, [searchOpen]);
+
+  const closeSearch = () => {
+    onToggleSearch();
+    searchButton.current?.focus({ preventScroll: true });
+  };
 
   useEffect(() => {
     if (!openMenu) return;
@@ -132,6 +163,22 @@ export function DiffToolbar({
             onClick={() => onViewModeChange('inline')}
           >
             Inline
+          </button>
+        </div>
+
+        <div className="diff-toolbar__group diff-change-nav" role="group" aria-label="Change navigation">
+          <button type="button" className="btn btn--small btn--icon" disabled={!changeCount}
+            onClick={onPrevChange} aria-label="Previous change" title="Previous change (Alt+P)">
+            <ChevronUpIcon size={15} />
+          </button>
+          <span className="diff-nav-count" role="status">
+            {changeOrdinal == null
+              ? `${changeCount.toLocaleString()} ${changeCount === 1 ? 'change' : 'changes'}`
+              : `${(changeOrdinal + 1).toLocaleString()} / ${changeCount.toLocaleString()} changes`}
+          </span>
+          <button type="button" className="btn btn--small btn--icon" disabled={!changeCount}
+            onClick={onNextChange} aria-label="Next change" title="Next change (Alt+N)">
+            <ChevronDownIcon size={15} />
           </button>
         </div>
 
@@ -231,11 +278,13 @@ export function DiffToolbar({
             <span className="btn__label">Numbers</span>
           </button>
           <button
+            ref={searchButton}
             type="button"
             className={`btn btn--small ${searchOpen ? 'btn--primary' : ''}`}
             onClick={onToggleSearch}
             title="Search within diff (Ctrl+F)"
             aria-label="Find in diff"
+            aria-expanded={searchOpen}
           >
             <SearchIcon size={14} />
             <span className="btn__label">Find</span>
@@ -326,6 +375,7 @@ export function DiffToolbar({
                   onCopyMarkdown();
                   setOpenMenu(null);
                 }}
+                disabled={!patchReady}
               >
                 <CopyIcon size={14} />
                 <span>{copiedMarkdown ? 'Copied Markdown!' : 'Copy as Markdown'}</span>
@@ -338,6 +388,7 @@ export function DiffToolbar({
                   onExportHtml();
                   setOpenMenu(null);
                 }}
+                disabled={!reportReady}
               >
                 <DownloadIcon size={14} />
                 <span>Download HTML Report</span>
@@ -378,7 +429,7 @@ export function DiffToolbar({
                 }}
               >
                 <DownloadIcon size={14} />
-                <span>Save comparison session</span>
+                <span>Export comparison session</span>
               </button>
             </div>
           )}
@@ -386,33 +437,63 @@ export function DiffToolbar({
       </div>
 
       {searchOpen && (
-        <div className="diff-search-bar" role="search">
+        <div className="diff-search-bar" role="search" aria-label="Find in diff"
+          onKeyDown={(event) => {
+            if (event.key === 'Escape' || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f')) {
+              event.preventDefault();
+              closeSearch();
+            }
+          }}>
           <SearchIcon size={15} className="diff-search-icon" />
           <input
             type="text"
+            ref={searchInput}
             className="diff-search-input"
-            placeholder="Search text within differences..."
+            placeholder="Find text…"
+            maxLength={1024}
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
+              event.preventDefault();
+              if (event.shiftKey) onSearchPrev();
+              else onSearchNext();
+            }}
             aria-label="Search within diff"
-            autoFocus
           />
           {searchQuery && (
             <button
               type="button"
               className="diff-search-clear"
-              onClick={() => onSearchChange('')}
+              onClick={() => {
+                onSearchChange('');
+                searchInput.current?.focus();
+              }}
               aria-label="Clear search"
             >
               <CloseIcon size={13} />
             </button>
           )}
+          <span className="diff-nav-count" role="status">
+            {searchQuery.trim() && (searchOrdinal == null
+              ? `${searchCount.toLocaleString()} ${searchCount === 1 ? 'match' : 'matches'}`
+              : `${(searchOrdinal + 1).toLocaleString()} / ${searchCount.toLocaleString()}`)}
+          </span>
+          <button type="button" className="btn btn--small btn--icon" disabled={!searchCount}
+            onClick={onSearchPrev} aria-label="Previous match" title="Previous match (Shift+Enter)">
+            <ChevronUpIcon size={14} />
+          </button>
+          <button type="button" className="btn btn--small btn--icon" disabled={!searchCount}
+            onClick={onSearchNext} aria-label="Next match" title="Next match (Enter)">
+            <ChevronDownIcon size={14} />
+          </button>
           <button
             type="button"
-            className="btn btn--small btn--ghost"
-            onClick={onToggleSearch}
+            className="btn btn--small btn--ghost btn--icon"
+            aria-label="Close search"
+            onClick={closeSearch}
           >
-            Close
+            <CloseIcon size={14} />
           </button>
         </div>
       )}

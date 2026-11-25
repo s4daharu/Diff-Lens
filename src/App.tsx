@@ -5,13 +5,14 @@ import { InputPanel } from './components/InputPanel';
 import { SourcesBar } from './components/SourcesBar';
 import { DiffToolbar } from './components/DiffToolbar';
 import { DiffSidebar } from './components/DiffSidebar';
-import { DiffView } from './components/DiffView';
-import { SourceEditorModal } from './components/SourceEditorModal';
+import { DiffView, type ChangeJump, type SearchTarget } from './components/DiffView';
+import { SourceEditor } from './components/SourceEditor';
 import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal';
 import { SessionNameModal } from './components/SessionNameModal';
+import { SavedComparisonsDialog } from './components/SavedComparisonsDialog';
 import { PrintReport } from './components/PrintReport';
 import { ImageComparison } from './components/ImageComparison';
-import { LogoIcon, SwapIcon } from './components/Icons';
+import { SwapIcon } from './components/Icons';
 import {
   DEFAULT_OPTIONS,
   type ComparisonType,
@@ -30,8 +31,10 @@ import { SAMPLE_CHANGED, SAMPLE_ORIGINAL } from './lib/sample';
 import {
   applyContext,
   buildHtmlDiffReport,
+  formatMarkdownPatch,
 } from './lib/diffEngine';
 import { sanitizeIgnoreRules } from './lib/ignoreRules';
+import { createLineSearch, indexDiffMatches } from './lib/diffSearch';
 import {
   buildChangeSections,
   type ChangeSection,
@@ -49,10 +52,18 @@ import { MAX_FILE_BYTES } from './components/InputPanel';
 import {
   MAX_SESSION_FILE_BYTES,
   createComparisonSession,
+  normalizeSessionName,
   parseComparisonSession,
   serializeComparisonSession,
   sessionFileName,
+  type ComparisonSession,
+  type CreateComparisonSessionInput,
 } from './lib/session';
+import {
+  addSavedComparison, deleteSavedComparison, listSavedComparisons,
+  readSavedComparison, updateSavedComparison, type SavedComparison,
+  SavedComparisonConflict,
+} from './lib/savedComparisons';
 
 type Theme = 'light' | 'dark';
 
@@ -78,6 +89,40 @@ interface PrintReportRequest {
   viewMode: ViewMode;
   generatedAt: string;
 }
+
+interface TextDraft extends MergeSnapshot {
+  names: { old: string | null; new: string | null };
+  ready: { old: boolean; new: boolean };
+  compared: boolean;
+  savedId: string | null;
+  savedRevision: string | null;
+  sessionName: string | null;
+}
+
+function loadDraft(): TextDraft {
+  const stored = loadJson<TextDraft | null>(storageKeys.draft, null);
+  if (stored && typeof stored.oldText === 'string' && typeof stored.newText === 'string'
+    && stored.names && stored.ready) return stored;
+  const oldText = loadString(storageKeys.oldText, '');
+  const newText = loadString(storageKeys.newText, '');
+  return {
+    oldText, newText,
+    names: { old: null, new: null },
+    ready: { old: oldText !== '', new: newText !== '' },
+    compared: false,
+    savedId: null,
+    savedRevision: null,
+    sessionName: null,
+  };
+}
+
+interface ComparisonInput extends MergeSnapshot {
+  options: DiffOptions;
+  oldName: string | null;
+  newName: string | null;
+}
+
+type SessionSnapshot = Omit<CreateComparisonSessionInput, 'name'>;
 
 function usePersistedState<T>(
   key: string,
@@ -108,7 +153,7 @@ function sanitizeOptions(raw: unknown): DiffOptions {
     context:
       o.context === 'all'
         ? 'all'
-        : typeof o.context === 'number' && Number.isFinite(o.context)
+        : typeof o.context === 'number' && Number.isSafeInteger(o.context) && o.context >= 0
           ? o.context
           : DEFAULT_OPTIONS.context,
     granularity:
@@ -128,8 +173,10 @@ function getInitialTheme(): Theme {
 }
 
 export default function App() {
-  const [oldText, setOldText] = useState(() => loadString(storageKeys.oldText, ''));
-  const [newText, setNewText] = useState(() => loadString(storageKeys.newText, ''));
+  const [draft] = useState(loadDraft);
+  const [oldText, setOldText] = useState(draft.oldText);
+  const [newText, setNewText] = useState(draft.newText);
+  const [hasCompared, setHasCompared] = useState(draft.compared);
   const [options, setOptions] = usePersistedState<DiffOptions>(
     storageKeys.options,
     DEFAULT_OPTIONS,
@@ -157,6 +204,8 @@ export default function App() {
   const [imageResetToken, setImageResetToken] = useState(0);
 
   const [result, setResult] = useState<DiffResult | null>(null);
+  const [resultInput, setResultInput] = useState<ComparisonInput | null>(null);
+  const [comparisonError, setComparisonError] = useState<string | null>(null);
   const [computing, setComputing] = useState(false);
   const [patch, setPatch] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -167,28 +216,29 @@ export default function App() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchSelection, setSearchSelection] = useState<{
+    index: ReturnType<typeof indexDiffMatches>;
+    ordinal: number;
+  } | null>(null);
   const [expandedIndices, setExpandedIndices] = useState<Set<number>>(() => new Set());
   const [currentChangeIndex, setCurrentChangeIndex] = useState<number | null>(null);
-  const [activeChangeRowIndex, setActiveChangeRowIndex] = useState<number | null>(null);
-  const [activeChangeEndRowIndex, setActiveChangeEndRowIndex] = useState<number | null>(null);
+  const [changeJump, setChangeJump] = useState<ChangeJump | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sessionNameDialogOpen, setSessionNameDialogOpen] = useState(false);
-  const [sessionName, setSessionName] = useState<string | null>(null);
+  const [sessionName, setSessionName] = useState<string | null>(draft.sessionName);
+  const [savedOpen, setSavedOpen] = useState(false);
+  const [savedEntries, setSavedEntries] = useState<SavedComparison[]>([]);
+  const [savedLoadError, setSavedLoadError] = useState<string | null>(null);
+  const [activeSavedId, setActiveSavedId] = useState<string | null>(draft.savedId);
   const [syntaxEnabled, setSyntaxEnabled] = usePersistedState(
     storageKeys.syntax,
     true,
     (v) => v === true,
   );
   const [tokenizer, setTokenizer] = useState<LineTokenizer | null>(null);
-  const [fileNames, setFileNames] = useState<{
-    old: string | null;
-    new: string | null;
-  }>({ old: null, new: null });
-  const [sourceReady, setSourceReady] = useState(() => ({
-    old: oldText !== '',
-    new: newText !== '',
-  }));
+  const [fileNames, setFileNames] = useState(draft.names);
+  const [sourceReady, setSourceReady] = useState(draft.ready);
   const [mergePast, setMergePast] = useState<MergeSnapshot[]>([]);
   const [mergeFuture, setMergeFuture] = useState<MergeSnapshot[]>([]);
   const [printReport, setPrintReport] = useState<PrintReportRequest | null>(
@@ -196,6 +246,7 @@ export default function App() {
   );
 
   const workerRef = useRef<Worker | null>(null);
+  const requestInputRef = useRef<ComparisonInput | null>(null);
   const workerWatchdogRef = useRef<number | undefined>(undefined);
   const seqRef = useRef(0);
   const toastTimerRef = useRef<number | undefined>(undefined);
@@ -205,6 +256,29 @@ export default function App() {
   );
   const expectedMergeTextRef = useRef<MergeSnapshot | null>(null);
   const pendingMergeFocusIndexRef = useRef<number | null>(null);
+  const lastLocalSave = useRef<{
+    id: string;
+    snapshot: SessionSnapshot;
+    pending?: Promise<void>;
+  } | null>(null);
+  const openedSavedBaseline = useRef<string | null>(null);
+  const savedRevision = useRef<{ id: string; value: string } | null>(
+    draft.savedId && draft.savedRevision ? { id: draft.savedId, value: draft.savedRevision } : null,
+  );
+  const workspaceHeading = useRef<HTMLHeadingElement>(null);
+  const activeSaved = savedEntries.find((entry) => entry.id === activeSavedId);
+  const draftSavedRevision = savedRevision.current?.id === activeSavedId ? savedRevision.current.value : null;
+  const displayName = activeSaved?.name ?? sessionName;
+
+  const comparisonInput = useMemo<ComparisonInput>(() => ({
+    oldText, newText, options, oldName: fileNames.old, newName: fileNames.new,
+  }), [oldText, newText, options, fileNames]);
+  const freshResult = result != null && !result.aborted && resultInput === comparisonInput;
+  const sessionSnapshot = useMemo<SessionSnapshot>(() => ({
+    ...comparisonInput,
+    oldReady: sourceReady.old, newReady: sourceReady.new,
+    viewMode, wrap, lineNumbers, syntaxEnabled,
+  }), [comparisonInput, sourceReady, viewMode, wrap, lineNumbers, syntaxEnabled]);
 
   const showToast = useCallback((message: string) => {
     setToast(message);
@@ -223,29 +297,35 @@ export default function App() {
     });
     w.onmessage = (e: MessageEvent<WorkerResponse>) => {
       const msg = e.data;
-      if (msg.id !== seqRef.current) return;
+      if (workerRef.current !== w || msg.id !== seqRef.current) return;
       window.clearTimeout(workerWatchdogRef.current);
       workerWatchdogRef.current = undefined;
       setComputing(false);
+      const requestInput = requestInputRef.current;
+      requestInputRef.current = null;
       if (!msg.ok) {
-        setResult(null);
-        showToast(msg.error ?? 'Something went wrong while diffing.');
+        setComparisonError(msg.error ?? 'Something went wrong while diffing.');
+        setPatch(null);
         return;
       }
       setResult(msg.result ?? null);
+      setResultInput(requestInput);
       setPatch(msg.patch ?? null);
     };
     w.onerror = () => {
+      if (workerRef.current !== w) return;
       window.clearTimeout(workerWatchdogRef.current);
       workerWatchdogRef.current = undefined;
       w.terminate();
-      if (workerRef.current === w) workerRef.current = null;
+      workerRef.current = null;
+      requestInputRef.current = null;
       setComputing(false);
-      showToast('Diff worker failed — try smaller inputs.');
+      setComparisonError('Diff worker failed — try smaller inputs.');
+      setPatch(null);
     };
     workerRef.current = w;
     return w;
-  }, [showToast]);
+  }, []);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -275,13 +355,13 @@ export default function App() {
 
   useEffect(() => {
     if (comparisonType !== 'text') return;
-    ensureWorker();
     return () => {
       window.clearTimeout(workerWatchdogRef.current);
       workerRef.current?.terminate();
       workerRef.current = null;
+      requestInputRef.current = null;
     };
-  }, [comparisonType, ensureWorker]);
+  }, [comparisonType]);
 
   useEffect(() => {
     if (options.context !== 0) {
@@ -300,9 +380,10 @@ export default function App() {
       return;
     }
     let cancelled = false;
-    createLineTokenizer(syntaxLang, theme).then((t) => {
-      if (!cancelled) setTokenizer(t);
-    });
+    createLineTokenizer(syntaxLang, theme).then(
+      (t) => { if (!cancelled) setTokenizer(t); },
+      () => { if (!cancelled) setTokenizer(null); },
+    );
     return () => {
       cancelled = true;
     };
@@ -310,60 +391,74 @@ export default function App() {
   useEffect(() => {
     window.clearTimeout(workerWatchdogRef.current);
     workerWatchdogRef.current = undefined;
+    // A busy worker would queue the new request behind obsolete inputs.
+    if (requestInputRef.current) {
+      workerRef.current?.terminate();
+      workerRef.current = null;
+      requestInputRef.current = null;
+    }
     if (comparisonType !== 'text') {
       seqRef.current++;
       setComputing(false);
       return;
     }
-    if (!sourceReady.old || !sourceReady.new) {
+    if (!hasCompared) {
       seqRef.current++;
       setResult(null);
+      setResultInput(null);
       setPatch(null);
       setComputing(false);
+      setComparisonError(null);
       return;
     }
+    setComparisonError(null);
     setComputing(true);
     const id = ++seqRef.current;
     const timer = window.setTimeout(() => {
-      const w = ensureWorker();
-      w.postMessage({
-        id,
-        oldText,
-        newText,
-        options,
-        oldName: fileNames.old ?? undefined,
-        newName: fileNames.new ?? undefined,
-      });
-      workerWatchdogRef.current = window.setTimeout(() => {
-        if (id !== seqRef.current) return;
-        w.terminate();
-        if (workerRef.current === w) workerRef.current = null;
-        workerWatchdogRef.current = undefined;
+      try {
+        const w = ensureWorker();
+        requestInputRef.current = comparisonInput;
+        w.postMessage({
+          id,
+          ...comparisonInput,
+          oldName: comparisonInput.oldName ?? undefined,
+          newName: comparisonInput.newName ?? undefined,
+        });
+        workerWatchdogRef.current = window.setTimeout(() => {
+          if (id !== seqRef.current) return;
+          w.terminate();
+          if (workerRef.current === w) workerRef.current = null;
+          requestInputRef.current = null;
+          workerWatchdogRef.current = undefined;
+          setComputing(false);
+          setPatch(null);
+          setComparisonError(
+            'Comparison timed out. Check custom regex rules or try smaller inputs.',
+          );
+        }, WORKER_TIMEOUT_MS);
+      } catch {
+        workerRef.current?.terminate();
+        workerRef.current = null;
+        requestInputRef.current = null;
         setComputing(false);
-        showToast(
-          'Comparison timed out. Check custom regex rules or try smaller inputs.',
-        );
-      }, WORKER_TIMEOUT_MS);
+        setPatch(null);
+        setComparisonError('Could not start the diff worker. Try reloading this page.');
+      }
     }, DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
   }, [
     comparisonType,
-    oldText,
-    newText,
-    options,
-    fileNames,
-    sourceReady,
+    comparisonInput,
+    hasCompared,
     ensureWorker,
-    showToast,
   ]);
 
   // Reset expanded gaps when inputs or context settings change
   useEffect(() => {
     setExpandedIndices(new Set());
     setCurrentChangeIndex(null);
-    setActiveChangeRowIndex(null);
-    setActiveChangeEndRowIndex(null);
-  }, [oldText, newText, options.context]);
+    setChangeJump(null);
+  }, [comparisonInput]);
 
   useEffect(() => {
     if (comparisonType !== 'text') return;
@@ -410,27 +505,121 @@ export default function App() {
         })
         .catch(() => showToast(`Could not read "${file.name}".`));
     };
+    const resetDropOverlay = () => {
+      dragCounter = 0;
+      setGlobalDrag(false);
+    };
     window.addEventListener('dragenter', onDragEnter);
     window.addEventListener('dragover', onDragOver);
     window.addEventListener('dragleave', onDragLeave);
     window.addEventListener('drop', onDrop);
+    window.addEventListener('drop', resetDropOverlay, true);
     window.addEventListener('dragend', onDragLeave);
     return () => {
       window.removeEventListener('dragenter', onDragEnter);
       window.removeEventListener('dragover', onDragOver);
       window.removeEventListener('dragleave', onDragLeave);
       window.removeEventListener('drop', onDrop);
+      window.removeEventListener('drop', resetDropOverlay, true);
       window.removeEventListener('dragend', onDragLeave);
     };
   }, [comparisonType, showToast]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      save(storageKeys.oldText, oldText);
-      save(storageKeys.newText, newText);
-    }, 500);
-    return () => window.clearTimeout(timer);
-  }, [oldText, newText]);
+    const persist = () => {
+      const next: TextDraft = {
+        oldText, newText, names: fileNames, ready: sourceReady,
+        compared: hasCompared, savedId: activeSavedId, sessionName,
+        savedRevision: draftSavedRevision,
+      };
+      save(storageKeys.draft, next);
+    };
+    const timer = window.setTimeout(persist, 500);
+    window.addEventListener('pagehide', persist);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('pagehide', persist);
+    };
+  }, [oldText, newText, fileNames, sourceReady, hasCompared, activeSavedId, draftSavedRevision, sessionName]);
+
+  useEffect(() => {
+    if (!savedOpen && !activeSavedId) return;
+    let cancelled = false;
+    listSavedComparisons().then(
+      (entries) => {
+        if (cancelled) return;
+        setSavedEntries(entries);
+        setSavedLoadError(null);
+      },
+      () => {
+        if (!cancelled) setSavedLoadError('Saved comparisons are unavailable in this browser.');
+      },
+    );
+    return () => { cancelled = true; };
+  }, [savedOpen, activeSavedId]);
+
+  const upsertSavedEntry = useCallback((entry: SavedComparison) => {
+    setSavedEntries((entries) => [...entries.filter(({ id }) => id !== entry.id), entry]);
+  }, []);
+
+  const persistSaved = useCallback((entry: SavedComparison, automatic = false) => {
+    const marker: NonNullable<typeof lastLocalSave.current> = {
+      id: entry.id, snapshot: sessionSnapshot,
+    };
+    const previous = lastLocalSave.current;
+    const pending = (async () => {
+      if (previous?.id === entry.id) await previous.pending;
+      const base = savedRevision.current;
+      if (base?.id !== entry.id) throw new SavedComparisonConflict();
+      const updated = await updateSavedComparison(entry.id, {
+        session: createComparisonSession({ ...sessionSnapshot, name: entry.name }),
+        baseRevision: base.value,
+        automatic,
+      });
+      savedRevision.current = { id: entry.id, value: updated.savedAt };
+      upsertSavedEntry(updated);
+    })().catch((error: unknown) => {
+      if (lastLocalSave.current === marker) lastLocalSave.current = null;
+      if (error instanceof SavedComparisonConflict) {
+        setActiveSavedId((current) => current === entry.id ? null : current);
+      }
+      throw error;
+    }).finally(() => {
+      marker.pending = undefined;
+    });
+    marker.pending = pending;
+    lastLocalSave.current = marker;
+    return pending;
+  }, [sessionSnapshot, upsertSavedEntry]);
+
+  const flushAutosave = useCallback(() => {
+    if (!activeSaved?.autosave || !hasCompared) return;
+    const last = lastLocalSave.current;
+    const pending = last?.id === activeSaved.id && last.snapshot === sessionSnapshot
+      ? last.pending : persistSaved(activeSaved, true);
+    return pending?.then(() => true, (error: unknown) => {
+      showToast(error instanceof SavedComparisonConflict ? error.message :
+        'Could not autosave this comparison. Export a backup to keep your edits.');
+      return false;
+    });
+  }, [activeSaved, hasCompared, sessionSnapshot, persistSaved, showToast]);
+
+  useEffect(() => {
+    if (activeSaved && openedSavedBaseline.current === activeSaved.id) {
+      lastLocalSave.current = { id: activeSaved.id, snapshot: sessionSnapshot };
+      openedSavedBaseline.current = null;
+    }
+    if (!activeSaved?.autosave || !hasCompared) return;
+    const timer = window.setTimeout(flushAutosave, 600);
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flushAutosave();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [activeSaved, hasCompared, flushAutosave, sessionSnapshot]);
 
   useEffect(() => {
     const expected = expectedMergeTextRef.current;
@@ -446,7 +635,9 @@ export default function App() {
     setMergeFuture([]);
   }, [oldText, newText]);
 
-  const handleNewDiff = useCallback(() => {
+  const handleNewDiff = useCallback(async () => {
+    const pending = flushAutosave();
+    if (pending && !await pending) return;
     const hadSources = sourceReady.old || sourceReady.new;
     const prevOld = oldText;
     const prevNew = newText;
@@ -454,8 +645,11 @@ export default function App() {
     const prevOptions = options;
     const prevReady = sourceReady;
     const prevSessionName = sessionName;
+    const prevSavedId = activeSavedId;
     setOldText('');
     setNewText('');
+    setHasCompared(false);
+    setActiveSavedId(null);
     setOptions(DEFAULT_OPTIONS);
     lastVisibleContextRef.current = DEFAULT_OPTIONS.context;
     setFileNames({ old: null, new: null });
@@ -465,8 +659,7 @@ export default function App() {
     setSidebarOpen(false);
     setExpandedIndices(new Set());
     setCurrentChangeIndex(null);
-    setActiveChangeRowIndex(null);
-    setActiveChangeEndRowIndex(null);
+    setChangeJump(null);
     setSearchQuery('');
     setSearchOpen(false);
     setEditorOpen(false);
@@ -474,9 +667,6 @@ export default function App() {
     setMergeFuture([]);
     expectedMergeTextRef.current = null;
     pendingMergeFocusIndexRef.current = null;
-    save(storageKeys.oldText, '');
-    save(storageKeys.newText, '');
-    save(storageKeys.options, DEFAULT_OPTIONS);
     if (hadSources) {
       window.clearTimeout(toastTimerRef.current);
       setToast('Cleared');
@@ -486,10 +676,9 @@ export default function App() {
         setFileNames(prevNames);
         setSourceReady(prevReady);
         setSessionName(prevSessionName);
+        setActiveSavedId(prevSavedId);
+        setHasCompared(hasCompared);
         setOptions(prevOptions);
-        save(storageKeys.oldText, prevOld);
-        save(storageKeys.newText, prevNew);
-        save(storageKeys.options, prevOptions);
         setToast('Restored');
         setToastUndo(null);
         window.clearTimeout(toastTimerRef.current);
@@ -510,29 +699,43 @@ export default function App() {
     options,
     sourceReady,
     sessionName,
+    activeSavedId,
+    hasCompared,
+    flushAutosave,
   ]);
 
-  const handleLoadSample = useCallback(() => {
+  const handleLoadSample = useCallback(async () => {
+    const pending = flushAutosave();
+    if (pending && !await pending) return;
     setOldText(SAMPLE_ORIGINAL);
     setNewText(SAMPLE_CHANGED);
     setFileNames({ old: null, new: null });
     setSourceReady({ old: true, new: true });
+    setHasCompared(true);
+    setActiveSavedId(null);
     setSessionName(null);
     setExpandedIndices(new Set());
     setMergePast([]);
     setMergeFuture([]);
-  }, []);
+  }, [flushAutosave]);
 
-  const handleSelectPreset = useCallback((preset: SamplePreset) => {
+  const handleSelectPreset = useCallback(async (preset: SamplePreset) => {
+    const pending = flushAutosave();
+    if (pending && !await pending) return;
+    setResult(null);
+    setResultInput(null);
+    setPatch(null);
     setOldText(preset.oldText);
     setNewText(preset.newText);
     setFileNames({ old: preset.oldName, new: preset.newName });
     setSourceReady({ old: true, new: true });
+    setHasCompared(true);
+    setActiveSavedId(null);
     setSessionName(null);
     setExpandedIndices(new Set());
     setMergePast([]);
     setMergeFuture([]);
-  }, []);
+  }, [flushAutosave]);
 
   const handleSwap = useCallback(() => {
     setOldText(newText);
@@ -545,7 +748,7 @@ export default function App() {
   }, [oldText, newText]);
 
   const handleCopyPatch = useCallback(async () => {
-    if (patch === null) return;
+    if (!freshResult || patch === null) return;
     try {
       await navigator.clipboard.writeText(patch);
       setCopied(true);
@@ -553,20 +756,19 @@ export default function App() {
     } catch {
       showToast('Could not access the clipboard.');
     }
-  }, [patch, showToast]);
+  }, [freshResult, patch, showToast]);
 
   const handleCopyMarkdown = useCallback(async () => {
-    if (patch === null) return;
+    if (!freshResult || patch === null) return;
     try {
-      const md = `\`\`\`diff\n${patch.trimEnd()}\n\`\`\`\n`;
-      await navigator.clipboard.writeText(md);
+      await navigator.clipboard.writeText(formatMarkdownPatch(patch));
       setCopiedMarkdown(true);
       showToast('Copied Markdown diff to clipboard');
       window.setTimeout(() => setCopiedMarkdown(false), 2000);
     } catch {
       showToast('Could not access the clipboard.');
     }
-  }, [patch, showToast]);
+  }, [freshResult, patch, showToast]);
 
   const triggerDownload = useCallback((blob: Blob, filename: string) => {
     const url = URL.createObjectURL(blob);
@@ -580,57 +782,46 @@ export default function App() {
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }, []);
 
-  const handleImportSession = useCallback(
-    async (file: File) => {
-      if (file.size > MAX_SESSION_FILE_BYTES) {
-        showToast('Could not open session: the file is larger than 32 MB.');
-        return;
-      }
+  const restoreSession = useCallback(
+    (session: ComparisonSession, entry?: SavedComparison) => {
+      const { original, changed } = session.sources;
+      const preferences = session.preferences;
 
-      try {
-        const session = parseComparisonSession(await file.text());
-        const { original, changed } = session.sources;
-        const preferences = session.preferences;
+      setResult(null);
+      setResultInput(null);
+      setPatch(null);
+      setOldText(original.text);
+      setNewText(changed.text);
+      setFileNames({ old: original.name, new: changed.name });
+      setSourceReady({ old: original.ready, new: changed.ready });
+      setHasCompared(original.ready && changed.ready);
+      setActiveSavedId(entry?.id ?? null);
+      savedRevision.current = entry ? { id: entry.id, value: entry.savedAt } : null;
+      openedSavedBaseline.current = entry?.id ?? null;
+      setSessionName(session.name);
+      setOptions(preferences.options);
+      setViewMode(preferences.viewMode);
+      setWrap(preferences.wrap);
+      setLineNumbers(preferences.lineNumbers);
+      setSyntaxEnabled(preferences.syntaxEnabled);
+      lastVisibleContextRef.current = preferences.options.context === 0
+        ? 'all'
+        : preferences.options.context;
+      setExpandedIndices(new Set());
+      setCurrentChangeIndex(null);
+      setChangeJump(null);
+      setSidebarOpen(false);
+      setSearchOpen(false);
+      setSearchQuery('');
+      setEditorOpen(false);
+      setSessionNameDialogOpen(false);
+      setSavedOpen(false);
+      setMergePast([]);
+      setMergeFuture([]);
+      expectedMergeTextRef.current = null;
+      pendingMergeFocusIndexRef.current = null;
 
-        setOldText(original.text);
-        setNewText(changed.text);
-        setFileNames({ old: original.name, new: changed.name });
-        setSourceReady({ old: original.ready, new: changed.ready });
-        setSessionName(session.name);
-        setOptions(preferences.options);
-        setViewMode(preferences.viewMode);
-        setWrap(preferences.wrap);
-        setLineNumbers(preferences.lineNumbers);
-        setSyntaxEnabled(preferences.syntaxEnabled);
-        lastVisibleContextRef.current =
-          preferences.options.context === 0
-            ? 'all'
-            : preferences.options.context;
-        setExpandedIndices(new Set());
-        setCurrentChangeIndex(null);
-        setActiveChangeRowIndex(null);
-        setActiveChangeEndRowIndex(null);
-        setSidebarOpen(false);
-        setSearchOpen(false);
-        setSearchQuery('');
-        setEditorOpen(false);
-        setSessionNameDialogOpen(false);
-        setMergePast([]);
-        setMergeFuture([]);
-        expectedMergeTextRef.current = null;
-        pendingMergeFocusIndexRef.current = null;
-
-        save(storageKeys.oldText, original.text);
-        save(storageKeys.newText, changed.text);
-        save(storageKeys.options, preferences.options);
-        showToast(`Loaded session “${session.name}”`);
-      } catch (error) {
-        showToast(
-          error instanceof Error
-            ? error.message
-            : 'Could not open session: the file is invalid.',
-        );
-      }
+      showToast(`Loaded session “${session.name}”`);
     },
     [
       setLineNumbers,
@@ -642,31 +833,53 @@ export default function App() {
     ],
   );
 
+  const handleImportSession = useCallback(async (file: File) => {
+    if (file.size > MAX_SESSION_FILE_BYTES) {
+      showToast('Could not open session: the file is larger than 32 MB.');
+      return;
+    }
+    try {
+      const session = parseComparisonSession(await file.text());
+      if (await flushAutosave() === false) return;
+      restoreSession(session);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Could not open session: the file is invalid.');
+    }
+  }, [flushAutosave, restoreSession, showToast]);
+
+  const handleSaveLocal = async (name: string, autosave: boolean) => {
+    if (await flushAutosave() === false) throw new Error('Could not autosave the current comparison.');
+    const entry = await addSavedComparison(
+      createComparisonSession({ ...sessionSnapshot, name }), autosave,
+    );
+    lastLocalSave.current = { id: entry.id, snapshot: sessionSnapshot };
+    savedRevision.current = { id: entry.id, value: entry.savedAt };
+    upsertSavedEntry(entry);
+    setActiveSavedId(entry.id);
+    setSessionName(null);
+    setSavedOpen(false);
+    showToast(`Saved “${entry.name}” on this device`);
+  };
+
+  const handleOpenSaved = async (entry: SavedComparison) => {
+    if (await flushAutosave() === false) throw new Error('Could not autosave the current comparison.');
+    const saved = await readSavedComparison(entry.id);
+    upsertSavedEntry(saved.entry);
+    restoreSession(saved.session, saved.entry);
+  };
+
   const handleDownloadPatch = useCallback(() => {
-    if (patch === null) return;
+    if (!freshResult || patch === null) return;
     const blob = new Blob([patch], { type: 'text/plain' });
     const base = (name: string | null) =>
       name ? name.replace(/\.[^./\\]+$/, '') : 'diff';
     triggerDownload(blob, `${base(fileNames.new)}.patch`);
-  }, [patch, fileNames.new, triggerDownload]);
+  }, [freshResult, patch, fileNames.new, triggerDownload]);
 
   const handleSaveSession = useCallback(
     (name: string) => {
       try {
-        const session = createComparisonSession({
-          name,
-          oldText,
-          newText,
-          oldName: fileNames.old,
-          newName: fileNames.new,
-          oldReady: sourceReady.old,
-          newReady: sourceReady.new,
-          options,
-          viewMode,
-          wrap,
-          lineNumbers,
-          syntaxEnabled,
-        });
+        const session = createComparisonSession({ ...sessionSnapshot, name });
         const serialized = serializeComparisonSession(session);
         triggerDownload(
           new Blob([serialized], { type: 'application/json' }),
@@ -682,23 +895,15 @@ export default function App() {
       }
     },
     [
-      fileNames,
-      lineNumbers,
-      newText,
-      oldText,
-      options,
       showToast,
-      sourceReady,
-      syntaxEnabled,
+      sessionSnapshot,
       triggerDownload,
-      viewMode,
-      wrap,
     ],
   );
 
   const handlePrintReport = useCallback(
     (reportViewMode: ViewMode) => {
-      if (!result || result.aborted) return;
+      if (!freshResult) return;
       flushSync(() => {
         setPrintReport({
           viewMode: reportViewMode,
@@ -707,11 +912,11 @@ export default function App() {
       });
       window.print();
     },
-    [result],
+    [freshResult],
   );
 
   const handleExportHtml = useCallback(() => {
-    if (!result || result.rows.length === 0) return;
+    if (!freshResult || !result || result.rows.length === 0) return;
     const html = buildHtmlDiffReport({
       rows: result ? applyContext(result.rows, options.context, expandedIndices) : [],
       stats: result.stats,
@@ -723,7 +928,7 @@ export default function App() {
     const base = (name: string | null) =>
       name ? name.replace(/\.[^./\\]+$/, '') : 'diff';
     triggerDownload(blob, `${base(fileNames.new)}-report.html`);
-  }, [result, options, expandedIndices, fileNames, triggerDownload]);
+  }, [freshResult, result, options, expandedIndices, fileNames, triggerDownload]);
 
   const handleExpandGap = useCallback(
     (startRow: number, endRow: number) => {
@@ -740,10 +945,16 @@ export default function App() {
 
   const handleEditSources = useCallback(() => {
     setSearchOpen(false);
-    setEditorOpen(true);
-  }, []);
+    if (editorOpen) {
+      document.querySelector<HTMLTextAreaElement>('.source-editor .input-panel--left textarea')
+        ?.focus({ preventScroll: true });
+    } else {
+      setEditorOpen(true);
+    }
+  }, [editorOpen]);
   const handleCloseEditor = useCallback(() => {
     setEditorOpen(false);
+    document.querySelector<HTMLButtonElement>('[data-edit-sources]')?.focus({ preventScroll: true });
   }, []);
 
   const handleCloseSidebar = useCallback(() => {
@@ -784,16 +995,20 @@ export default function App() {
     [options, setOptions],
   );
 
-  const comparisonReady = sourceReady.old && sourceReady.new;
+  const canStartComparison = sourceReady.old && sourceReady.new;
   const hasAnySource = sourceReady.old || sourceReady.new;
+  const handleCompare = () => {
+    if (!canStartComparison) return;
+    setHasCompared(true);
+    window.requestAnimationFrame(() => workspaceHeading.current?.focus({ preventScroll: true }));
+  };
 
   useEffect(() => {
     const onBeforePrint = () => {
       if (
         comparisonType !== 'text' ||
-        !comparisonReady ||
-        !result ||
-        result.aborted ||
+        !hasCompared ||
+        !freshResult ||
         printReport
       ) {
         return;
@@ -812,17 +1027,48 @@ export default function App() {
       window.removeEventListener('beforeprint', onBeforePrint);
       window.removeEventListener('afterprint', onAfterPrint);
     };
-  }, [comparisonReady, comparisonType, printReport, result, viewMode]);
+  }, [hasCompared, comparisonType, printReport, freshResult, viewMode]);
 
   const identical =
     result?.stats != null &&
     result.stats.added + result.stats.removed + result.stats.changed === 0;
 
+  const lineSearch = useMemo(
+    () => searchOpen ? createLineSearch(searchQuery) : null,
+    [searchOpen, searchQuery],
+  );
+  const searchIndex = useMemo(
+    () => indexDiffMatches(result?.rows ?? [], lineSearch),
+    [result, lineSearch],
+  );
+  const searchOrdinal = searchSelection?.index === searchIndex ? searchSelection.ordinal : null;
+  const selectedMatch = useMemo(
+    () => searchOrdinal == null ? null : searchIndex.at(searchOrdinal),
+    [searchOrdinal, searchIndex],
+  );
+  const navigateSearch = (step: 1 | -1) => {
+    const { count } = searchIndex;
+    if (!count) return;
+    const ordinal = searchOrdinal == null
+      ? (step === 1 ? 0 : count - 1)
+      : (searchOrdinal + step + count) % count;
+    setSearchSelection({ index: searchIndex, ordinal });
+  };
+  const toggleSearch = useCallback(() => {
+    setSearchOpen((open) => !open);
+    setSearchSelection(null);
+  }, []);
+
   const visibleRows = useMemo(
     () =>
-      result ? applyContext(result.rows, options.context, expandedIndices) : [],
-    [result, options.context, expandedIndices],
+      result ? applyContext(result.rows, options.context, expandedIndices, selectedMatch?.rowIndex) : [],
+    [result, options.context, expandedIndices, selectedMatch?.rowIndex],
   );
+  const searchTarget = useMemo<SearchTarget | null>(() => {
+    if (!result || !selectedMatch) return null;
+    const visibleIndex = visibleRows.indexOf(result.rows[selectedMatch.rowIndex]);
+    return visibleIndex < 0 ? null : { ...selectedMatch, visibleIndex };
+  }, [result, selectedMatch, visibleRows]);
 
   const printRows = useMemo(
     () =>
@@ -864,14 +1110,18 @@ export default function App() {
     changeSections.forEach((section, index) => map.set(section.rowIndex, index));
     return map;
   }, [changeSections]);
+  const sectionsAtStart = useMemo(
+    () => new Map(changeSections.map((section) => [section.rowIndex, section])),
+    [changeSections],
+  );
 
   const activateSection = useCallback(
-    (index: number) => {
+    (index: number, focus = true) => {
       const section = changeSections[index];
       if (!section) return;
       setCurrentChangeIndex(index);
-      setActiveChangeRowIndex(section.rowIndex);
-      setActiveChangeEndRowIndex(section.endRowIndex);
+      setSearchSelection(null);
+      setChangeJump({ focus });
     },
     [changeSections],
   );
@@ -885,23 +1135,23 @@ export default function App() {
     [activateSection, ordinalBySectionStart],
   );
 
-  const handleNextChange = useCallback(() => {
+  const handleNextChange = useCallback((focus = true) => {
     if (changeSections.length === 0) return;
     const nextIndex =
       currentChangeIndex === null
         ? 0
         : (currentChangeIndex + 1) % changeSections.length;
-    activateSection(nextIndex);
+    activateSection(nextIndex, focus);
   }, [activateSection, changeSections.length, currentChangeIndex]);
 
-  const handlePrevChange = useCallback(() => {
+  const handlePrevChange = useCallback((focus = true) => {
     if (changeSections.length === 0) return;
     const previousIndex =
       currentChangeIndex === null
         ? changeSections.length - 1
         : (currentChangeIndex - 1 + changeSections.length) %
           changeSections.length;
-    activateSection(previousIndex);
+    activateSection(previousIndex, focus);
   }, [activateSection, changeSections.length, currentChangeIndex]);
 
   const currentMovedSectionIndex = useMemo(() => {
@@ -962,19 +1212,16 @@ export default function App() {
     (snapshot: MergeSnapshot, focusIndex: number) => {
       expectedMergeTextRef.current = snapshot;
       pendingMergeFocusIndexRef.current = focusIndex;
-      setResult(null);
-      setPatch(null);
       setComputing(true);
       setOldText(snapshot.oldText);
       setNewText(snapshot.newText);
-      save(storageKeys.oldText, snapshot.oldText);
-      save(storageKeys.newText, snapshot.newText);
     },
     [],
   );
 
   const handleMergeSection = useCallback(
     (rowIndex: number, direction: MergeDirection) => {
+      if (!freshResult) return;
       const sectionIndex = ordinalBySectionStart.get(rowIndex);
       if (sectionIndex == null) return;
       const section = changeSections[sectionIndex];
@@ -986,12 +1233,13 @@ export default function App() {
           : changeSections.filter(
               (candidate) => candidate.moveId === section.moveId,
             );
-      const merged = mergeChangeSections(
-        oldText,
-        newText,
-        sectionsToMerge,
-        direction,
-      );
+      let merged: MergeSnapshot;
+      try {
+        merged = mergeChangeSections(oldText, newText, sectionsToMerge, direction);
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : 'Could not apply this change section.');
+        return;
+      }
       if (merged.oldText === oldText && merged.newText === newText) return;
 
       const snapshot = { oldText, newText };
@@ -1010,6 +1258,7 @@ export default function App() {
     [
       applyMergeSnapshot,
       changeSections,
+      freshResult,
       newText,
       oldText,
       ordinalBySectionStart,
@@ -1059,11 +1308,12 @@ export default function App() {
 
   useEffect(() => {
     const requested = pendingMergeFocusIndexRef.current;
-    if (requested == null || result == null || computing) return;
+    if (requested == null || !freshResult || computing) return;
     pendingMergeFocusIndexRef.current = null;
     if (changeSections.length === 0) return;
-    activateSection(Math.min(requested, changeSections.length - 1));
-  }, [activateSection, changeSections.length, computing, result]);
+    const focus = !document.activeElement?.matches('textarea, input, select, [contenteditable=true]');
+    activateSection(Math.min(requested, changeSections.length - 1), focus);
+  }, [activateSection, changeSections.length, computing, freshResult]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -1077,9 +1327,10 @@ export default function App() {
           target.tagName === 'SELECT' ||
           target.isContentEditable);
 
-      if (e.key === 'Escape' && searchOpen && !editorOpen) {
+      if (e.defaultPrevented || savedOpen || sessionNameDialogOpen) return;
+      if (e.key === 'Escape' && searchOpen) {
         e.preventDefault();
-        setSearchOpen(false);
+        toggleSearch();
         return;
       }
 
@@ -1089,7 +1340,7 @@ export default function App() {
         return;
       }
 
-      if (e.altKey && !e.ctrlKey && !e.metaKey) {
+      if (!inInput && e.altKey && !e.ctrlKey && !e.metaKey) {
         if (e.key.toLowerCase() === 'n' || e.key === 'ArrowDown') {
           e.preventDefault();
           handleNextChange();
@@ -1102,7 +1353,7 @@ export default function App() {
         }
       }
 
-      if (e.key === 'F7') {
+      if (!inInput && e.key === 'F7') {
         e.preventDefault();
         if (e.shiftKey) handlePrevChange();
         else handleNextChange();
@@ -1135,23 +1386,19 @@ export default function App() {
         handleDownloadPatch();
       } else if (key === 'f') {
         // Only hijack Ctrl/Cmd+F when a diff is visible; otherwise allow native find.
-        if (comparisonReady && result && (result.rows.length > 0 || identical)) {
+        if (hasCompared && result && (result.rows.length > 0 || identical)) {
           e.preventDefault();
-          setSearchOpen((o) => !o);
+          toggleSearch();
         }
         return;
       } else if (key === 'e') {
         e.preventDefault();
-        if (!comparisonReady) {
+        if (!hasCompared) {
           const missingSide = sourceReady.old ? 'right' : 'left';
           document
             .querySelector<HTMLTextAreaElement>(
               `.input-panel--${missingSide} textarea`,
             )
-            ?.focus();
-        } else if (editorOpen) {
-          document
-            .querySelector<HTMLTextAreaElement>('.source-editor .input-panel--left textarea')
             ?.focus();
         } else {
           handleEditSources();
@@ -1169,14 +1416,21 @@ export default function App() {
     handleUndoMerge,
     handleRedoMerge,
     comparisonType,
-    comparisonReady,
+    hasCompared,
     sourceReady,
     result,
     identical,
     searchOpen,
-    editorOpen,
+    savedOpen,
+    sessionNameDialogOpen,
+    toggleSearch,
   ]);
 
+  const initialSessionName = displayName ??
+    (fileNames.old || fileNames.new
+      ? `${fileNames.old ?? 'Original'} vs ${fileNames.new ?? 'Changed'}`
+      : 'Comparison');
+  const closeSessionName = useCallback(() => setSessionNameDialogOpen(false), []);
   const inputPanels = (
     <>
       <InputPanel
@@ -1187,7 +1441,7 @@ export default function App() {
         onError={showToast}
         fileName={fileNames.old}
         onReadyChange={(ready) =>
-          setSourceReady((state) => ({ ...state, old: ready }))
+          setSourceReady((state) => ({ ...state, old: hasCompared || ready }))
         }
         onFileInfo={(name) =>
           setFileNames((names) => ({ ...names, old: name }))
@@ -1212,7 +1466,7 @@ export default function App() {
         onError={showToast}
         fileName={fileNames.new}
         onReadyChange={(ready) =>
-          setSourceReady((state) => ({ ...state, new: ready }))
+          setSourceReady((state) => ({ ...state, new: hasCompared || ready }))
         }
         onFileInfo={(name) =>
           setFileNames((names) => ({ ...names, new: name }))
@@ -1234,11 +1488,13 @@ export default function App() {
         }}
         comparisonType={comparisonType}
         onComparisonTypeChange={(nextType) => {
+          if (nextType === comparisonType) return;
           setComparisonType(nextType);
           setGlobalDrag(false);
           setShortcutsOpen(false);
           setSearchOpen(false);
           setEditorOpen(false);
+          setSavedOpen(false);
           setSessionNameDialogOpen(false);
           setPrintReport(null);
         }}
@@ -1259,54 +1515,53 @@ export default function App() {
         onImportSession={
           comparisonType === 'text' ? handleImportSession : undefined
         }
+        onShowSaved={comparisonType === 'text' ? () => setSavedOpen(true) : undefined}
       />
 
       <div
         className="text-comparison-shell"
         hidden={comparisonType !== 'text'}
       >
-      {!comparisonReady ? (
+      {!hasCompared ? (
         <main
           id={comparisonType === 'text' ? 'main-content' : undefined}
           className="main main--landing"
         >
-          <div className="panels">{inputPanels}</div>
-
-          <section className="empty" aria-live="polite">
-            <LogoIcon size={44} />
-            <h2>{hasAnySource ? 'Add the other source' : 'Compare two texts'}</h2>
-            <p>
-              {hasAnySource
-                ? sourceReady.old
-                  ? 'Original is ready. Add the changed source to start the comparison.'
-                  : 'Changed source is ready. Add the original source to start the comparison.'
-                : 'Paste text or open files in both panels above. The viewer opens only when both sources are ready, and everything stays on this device.'}
-            </p>
-            <button
-              type="button"
-              className="btn btn--primary"
-              onClick={handleLoadSample}
-            >
-              Try with sample text
-            </button>
+          <section className="text-intro">
+            <h1>Compare text</h1>
+            <p>Paste text or open two files. Your content stays on this device.</p>
           </section>
+          <div className="panels">{inputPanels}</div>
+          <div className="text-start">
+            <button type="button" className="btn btn--primary" disabled={!canStartComparison}
+              onClick={handleCompare}>Compare</button>
+            <button type="button" className="btn" onClick={handleLoadSample}>Try with sample text</button>
+            <p className="text-start__hint" role="status">
+              {canStartComparison ? 'Both sources are ready.' : hasAnySource
+                ? `Add the ${sourceReady.old ? 'changed' : 'original'} source to compare.`
+                : 'Add an original and a changed source to compare.'}
+            </p>
+          </div>
         </main>
       ) : (
         <main
           id={comparisonType === 'text' ? 'main-content' : undefined}
           className="main main--workspace"
         >
+          <h1 className="sr-only" tabIndex={-1} ref={workspaceHeading}>Text comparison</h1>
           <SourcesBar
             oldText={oldText}
             newText={newText}
             oldName={fileNames.old}
             newName={fileNames.new}
             identical={!!identical}
-            sessionName={sessionName}
+            sessionName={displayName}
             editorOpen={editorOpen}
-            onEdit={handleEditSources}
+            onEdit={editorOpen ? handleCloseEditor : handleEditSources}
             onSwap={handleSwap}
           />
+
+          {editorOpen && <SourceEditor onClose={handleCloseEditor}>{inputPanels}</SourceEditor>}
 
           <div className={`workspace${sidebarOpen ? ' workspace--sidebar-open' : ''}`}>
             {sidebarOpen && (
@@ -1327,7 +1582,8 @@ export default function App() {
               onMergeSection={handleMergeSection}
               sections={listedSections}
               hiddenSections={changeSections.length - listedSections.length}
-              activeSectionStartRow={activeChangeRowIndex}
+              activeSectionStartRow={currentSection?.rowIndex ?? null}
+              mergeDisabled={!freshResult}
               onSelectSection={handleSelectChange}
               options={options}
               onOptionsChange={setOptions}
@@ -1337,7 +1593,7 @@ export default function App() {
             />
             )}
 
-            <section className="results" aria-live="polite">
+            <section className="results" aria-label="Comparison results">
               <DiffToolbar
                 viewMode={viewMode}
                 onViewModeChange={setViewMode}
@@ -1352,25 +1608,35 @@ export default function App() {
                 sidebarOpen={sidebarOpen}
                 onToggleSidebar={() => setSidebarOpen((open) => !open)}
                 searchOpen={searchOpen}
-                onToggleSearch={() => setSearchOpen((o) => !o)}
+                onToggleSearch={toggleSearch}
                 searchQuery={searchQuery}
                 onSearchChange={setSearchQuery}
+                searchCount={searchIndex.count}
+                searchOrdinal={searchOrdinal}
+                onSearchNext={() => navigateSearch(1)}
+                onSearchPrev={() => navigateSearch(-1)}
+                changeCount={changeSections.length}
+                changeOrdinal={currentChangeIndex}
+                onNextChange={() => handleNextChange(false)}
+                onPrevChange={() => handlePrevChange(false)}
                 onCopyPatch={handleCopyPatch}
                 onDownloadPatch={handleDownloadPatch}
                 onCopyMarkdown={handleCopyMarkdown}
                 onExportHtml={handleExportHtml}
                 onPrintReport={handlePrintReport}
-                reportReady={Boolean(result && !result.aborted)}
+                reportReady={freshResult}
                 onSaveSession={() => setSessionNameDialogOpen(true)}
                 canUndoMerge={mergePast.length > 0}
                 canRedoMerge={mergeFuture.length > 0}
                 onUndoMerge={handleUndoMerge}
                 onRedoMerge={handleRedoMerge}
-                patchReady={patch !== null}
+                patchReady={freshResult && patch !== null}
                 copied={copied}
                 copiedMarkdown={copiedMarkdown}
               />
 
+              {comparisonError && <div className="notice" role="alert">{comparisonError}</div>}
+              {!result && !comparisonError && <p className="notice" role="status">Comparing sources…</p>}
               {result?.aborted && (
                 <div className="notice">
                   <strong>This diff was too large to compute.</strong> Try
@@ -1379,15 +1645,20 @@ export default function App() {
                 </div>
               )}
 
-              {result && !result.aborted && result.rows.length > 0 && (
+              {result && !result.aborted && (
                 <DiffView
                   rows={visibleRows}
                   viewMode={viewMode}
                   wrap={wrap}
                   lineNumbers={lineNumbers}
-                  searchQuery={searchQuery}
-                  activeChangeRowIndex={activeChangeRowIndex}
-                  activeChangeEndRowIndex={activeChangeEndRowIndex}
+                   search={lineSearch}
+                   searchTarget={searchTarget}
+                   activeChangeRowIndex={currentSection?.rowIndex}
+                   activeChangeEndRowIndex={currentSection?.endRowIndex}
+                   changeJump={changeJump}
+                   sectionsAtStart={sectionsAtStart}
+                   onMergeSection={handleMergeSection}
+                   mergeDisabled={!freshResult}
                   onExpandGap={handleExpandGap}
                   onCopyNotice={showToast}
                   getTokens={getTokens}
@@ -1399,7 +1670,7 @@ export default function App() {
         </main>
       )}
 
-      {!comparisonReady && (
+      {!hasCompared && (
         <footer className="footer">
           <p>
             DiffLens — an open source diff checker. Runs entirely in your browser;
@@ -1427,13 +1698,12 @@ export default function App() {
 
       {comparisonType === 'text' &&
         printReport &&
-        result &&
-        !result.aborted && (
+        result && freshResult && (
         <PrintReport
           rows={printRows}
           stats={result.stats}
           viewMode={printReport.viewMode}
-          sessionName={sessionName}
+          sessionName={displayName}
           oldName={fileNames.old ?? 'Original'}
           newName={fileNames.new ?? 'Changed'}
           generatedAt={printReport.generatedAt}
@@ -1493,43 +1763,45 @@ export default function App() {
       <SessionNameModal
         isOpen={
           comparisonType === 'text' &&
-          comparisonReady &&
+           hasCompared &&
           sessionNameDialogOpen
         }
-        initialName={
-          sessionName ??
-          (fileNames.old || fileNames.new
-            ? `${fileNames.old ?? 'Original'} vs ${fileNames.new ?? 'Changed'}`
-            : 'Comparison')
-        }
-        onClose={() => setSessionNameDialogOpen(false)}
+        initialName={initialSessionName}
+        onClose={closeSessionName}
         onSave={handleSaveSession}
       />
 
-      <SourceEditorModal
-        isOpen={comparisonType === 'text' && comparisonReady && editorOpen}
-        onClose={handleCloseEditor}
-        oldText={oldText}
-        newText={newText}
-        onChangeOld={setOldText}
-        onChangeNew={setNewText}
-        oldFileName={fileNames.old}
-        newFileName={fileNames.new}
-        onFileInfoOld={(name) =>
-          setFileNames((names) => ({ ...names, old: name }))
-        }
-        onFileInfoNew={(name) =>
-          setFileNames((names) => ({ ...names, new: name }))
-        }
-        onReadyChangeOld={(ready) =>
-          setSourceReady((state) => ({ ...state, old: ready }))
-        }
-        onReadyChangeNew={(ready) =>
-          setSourceReady((state) => ({ ...state, new: ready }))
-        }
-        onError={showToast}
-        onSwap={handleSwap}
-      />
+      {comparisonType === 'text' && savedOpen && (
+        <SavedComparisonsDialog
+          entries={[...savedEntries].sort((a, b) => b.savedAt.localeCompare(a.savedAt))}
+          loadError={savedLoadError}
+          activeId={activeSavedId}
+          canSave={hasCompared}
+          initialName={initialSessionName}
+          onClose={() => setSavedOpen(false)}
+          onCreate={handleSaveLocal}
+          onOpen={handleOpenSaved}
+          onRename={async (entry, name) => {
+            upsertSavedEntry(await updateSavedComparison(entry.id, { name: normalizeSessionName(name) }));
+          }}
+          onDelete={async (entry) => {
+            await deleteSavedComparison(entry.id);
+            setSavedEntries((entries) => entries.filter(({ id }) => id !== entry.id));
+            if (activeSavedId === entry.id) {
+              setActiveSavedId(null);
+              setSessionName(null);
+            }
+          }}
+          onSave={async (entry) => {
+            await persistSaved(entry);
+            setSavedOpen(false);
+            showToast(`Saved changes to “${entry.name}”`);
+          }}
+          onAutosave={async (entry, autosave) => {
+            upsertSavedEntry(await updateSavedComparison(entry.id, { autosave }));
+          }}
+        />
+      )}
 
       <KeyboardShortcutsModal
         isOpen={comparisonType === 'text' && shortcutsOpen}

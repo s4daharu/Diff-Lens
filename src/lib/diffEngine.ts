@@ -416,8 +416,9 @@ export function applyContext(
   rows: DiffRow[],
   context: number | 'all',
   expandedIndices?: Set<number> | null,
+  revealedIndex?: number,
 ): DiffRow[] {
-  if (context === 'all' && (!expandedIndices || expandedIndices.size === 0)) return rows;
+  if (context === 'all') return rows;
 
   const changedIndices: number[] = [];
   for (let i = 0; i < rows.length; i++) {
@@ -426,20 +427,22 @@ export function applyContext(
   if (changedIndices.length === 0 && (!expandedIndices || expandedIndices.size === 0)) return rows;
 
   const keep = new Set<number>();
-  if (context === 'all') {
-    for (let i = 0; i < rows.length; i++) keep.add(i);
-  } else {
-    for (const idx of changedIndices) {
-      const from = Math.max(0, idx - context);
-      const to = Math.min(rows.length - 1, idx + context);
-      for (let k = from; k <= to; k++) keep.add(k);
-    }
+  let coveredThrough = -1;
+  for (const idx of changedIndices) {
+    // Context windows are ordered. Visit overlapping rows only once.
+    const from = Math.max(coveredThrough + 1, idx - context);
+    const to = Math.min(rows.length - 1, idx + context);
+    for (let k = from; k <= to; k++) keep.add(k);
+    coveredThrough = to;
   }
 
   if (expandedIndices) {
     for (const idx of expandedIndices) {
       if (idx >= 0 && idx < rows.length) keep.add(idx);
     }
+  }
+  if (revealedIndex != null && revealedIndex >= 0 && revealedIndex < rows.length) {
+    keep.add(revealedIndex);
   }
 
   const out: DiffRow[] = [];
@@ -546,9 +549,8 @@ export function computeDiff(
 }
 
 /**
- * Builds a unified-format patch directly from diff rows, so the exported
- * patch always matches exactly what is displayed (including ignore options
- * and context settings).
+ * Builds a unified-format patch from supplied rows. The worker supplies raw
+ * rows when display-only ignore filters are enabled.
  */
 export function buildUnifiedPatch(
   rows: DiffRow[],
@@ -571,7 +573,8 @@ export function buildUnifiedPatch(
   const isLastNewLine = (n: number | null) =>
     eof.newNoNewlineAtEof === true && n !== null && n === maxNewNum;
 
-  const lines: string[] = [`--- ${oldName}`, `+++ ${newName}`];
+  const patchName = (name: string) => name.replace(/[\r\n\t]/g, ' ');
+  const lines: string[] = [`--- ${patchName(oldName)}`, `+++ ${patchName(newName)}`];
   let prevOld = 0;
   let prevNew = 0;
   let equalBuffer: DiffRow[] = [];
@@ -588,7 +591,8 @@ export function buildUnifiedPatch(
     const oldStart = hunk.oldLen === 0 ? Math.max(0, prevOld) : hunk.oldStart;
     const newStart = hunk.newLen === 0 ? Math.max(0, prevNew) : hunk.newStart;
     lines.push(`@@ -${oldStart},${hunk.oldLen} +${newStart},${hunk.newLen} @@`);
-    lines.push(...hunk.lines);
+    // An all-context hunk can exceed the engine's call argument limit.
+    for (const line of hunk.lines) lines.push(line);
     hunk = null;
   };
 
@@ -655,8 +659,18 @@ export function buildMarkdownDiff(
   newName = 'changed.txt',
   eof: PatchEofOptions = {},
 ): string {
-  const patch = buildUnifiedPatch(rows, context, oldName, newName, eof);
-  return '```diff\n' + patch.trimEnd() + '\n```\n';
+  return formatMarkdownPatch(buildUnifiedPatch(rows, context, oldName, newName, eof));
+}
+
+export function formatMarkdownPatch(patch: string): string {
+  let backticks = 3;
+  let tildes = 3;
+  for (const match of patch.matchAll(/^ {0,3}(`{3,}|~{3,})[ \t]*\r?$/gm)) {
+    if (match[1][0] === '`') backticks = Math.max(backticks, match[1].length + 1);
+    else tildes = Math.max(tildes, match[1].length + 1);
+  }
+  const fence = backticks <= tildes ? '`'.repeat(backticks) : '~'.repeat(tildes);
+  return `${fence}diff\n${patch}${patch.endsWith('\n') ? '' : '\n'}${fence}\n`;
 }
 
 function escapeHtml(str: string): string {

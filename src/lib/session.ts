@@ -115,9 +115,8 @@ function options(value: unknown): DiffOptions {
   const validContext =
     context === 'all' ||
     (typeof context === 'number' &&
-      Number.isFinite(context) &&
-      context >= 0 &&
-      Number.isInteger(context));
+      Number.isSafeInteger(context) &&
+      context >= 0);
 
   if (
     typeof raw.ignoreCase !== 'boolean' ||

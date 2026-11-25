@@ -1,5 +1,13 @@
 export const IMAGE_TILE_SIZE = 16;
 export const MAX_IMAGE_REGIONS = 200;
+const MAX_IMAGE_AREA = 4096 * 4096;
+const MAX_IMAGE_SIDE = 8192;
+
+export function assertImageSize(width: number, height: number): void {
+  if (width > MAX_IMAGE_SIDE || height > MAX_IMAGE_SIDE || width * height > MAX_IMAGE_AREA) {
+    throw new Error('The image or combined comparison canvas is too large. Resize to at most 16 megapixels and 8,192 pixels per side.');
+  }
+}
 
 export interface ImageChangeRegion {
   id: number;
@@ -163,6 +171,7 @@ export function comparePixelBuffers(
 ): ImageDiffResult {
   const width = Math.max(original.width, changed.width);
   const height = Math.max(original.height, changed.height);
+  assertImageSize(width, height);
   const totalPixels = width * height;
   const mask = new Uint8Array(totalPixels);
   const tileColumns = Math.ceil(width / IMAGE_TILE_SIZE);

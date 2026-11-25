@@ -1,6 +1,7 @@
 /// <reference lib="webworker" />
 
 import {
+  assertImageSize,
   comparePixelBuffers,
   type ImageDiffResult,
 } from './lib/imageDiff';
@@ -28,6 +29,7 @@ async function bitmapPixels(
   }
   const bitmap = await createImageBitmap(file);
   try {
+    assertImageSize(bitmap.width, bitmap.height);
     const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
     const context = canvas.getContext('2d', { willReadFrequently: true });
     if (!context) throw new Error('Could not create image canvas context.');

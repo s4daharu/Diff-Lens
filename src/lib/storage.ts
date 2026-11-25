@@ -1,6 +1,7 @@
 const KEYS = {
   oldText: 'opendiff:old',
   newText: 'opendiff:new',
+  draft: 'difflens:text-draft',
   options: 'opendiff:opts',
   viewMode: 'opendiff:view',
   wrap: 'opendiff:wrap',

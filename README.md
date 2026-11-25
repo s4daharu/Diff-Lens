@@ -11,21 +11,29 @@ with all diff computation happening in a Web Worker.
 - Workspace layout: diff canvas fills the viewport, with a summary sidebar
   (stats, change outline, options) and a compact toolbar
 - Side-by-side and inline (unified) text diff views
-- Local image comparison for PNG/JPEG/WebP with side-by-side, slider, fade, subtract, and highlight modes
+- Local image comparison for PNG/JPEG/WebP with side-by-side, slider, fade,
+  subtract, and highlight modes (up to 25 MB per file and 16 megapixels per comparison canvas)
 - Intra-line highlighting at character, word, or Smart automatic granularity
-- Landing screen with dual input panels; once a diff exists, sources collapse
-  into an "Edit sources" drawer
+- Dual source editors with an explicit **Compare** action, plus a docked
+  **Edit sources** panel that updates the visible diff as you type
 - Change-section outline — navigate contiguous edit hunks instead of stepping line by line
 - Bounded moved-block detection with paired-location navigation and ambiguity-safe matching
-- Per-section Changed ↔ Original merge actions with source-range-safe edits and bounded undo/redo history
+- Per-section Changed ↔ Original merge arrows in the result, with source-range-safe
+  edits and bounded undo/redo history
 - Difference minimap gutter with pointer and keyboard navigation
 - Image pixel threshold/ignore-alpha controls, bounded changed-region navigation, synchronized zoom/pan, and highlight PNG export
 - Paste text, open files (up to 10 MB), or drag & drop
 - Ignore case / whitespace / line endings (CRLF) plus ordered literal/regex custom ignore rules
 - Adjustable context lines with hidden-region collapse
-- Diff stats, find-in-diff, unified `.patch` / Markdown / HTML report export
+- Diff stats, change navigation in the toolbar, and find-in-diff with match count
+  and navigation through collapsed and off-screen lines
+- Unified `.patch` / Markdown / HTML report export
 - Browser-native Print / Save as PDF reports in side-by-side or inline layouts with full non-virtualized report rows
-- Named `.difflens.json` comparison sessions for local import/export of both sources and view preferences
+- **Saved** comparison library in this browser, with reopen, rename, delete, manual
+  updates, and optional autosave per comparison. A stale tab cannot overwrite a
+  newer saved copy.
+- Portable `.difflens.json` comparison sessions for importing or exporting both
+  sources and view preferences
 - Dark mode, wrap toggle, line numbers toggle
 - Inputs and preferences persisted in `localStorage`
 
@@ -37,7 +45,8 @@ with all diff computation happening in a Web Worker.
 | `Ctrl/⌘ + 2` | Inline view |
 | `Ctrl/⌘ + S` | Download `.patch` |
 | `Ctrl/⌘ + F` | Find within diff |
-| `Ctrl/⌘ + E` | Open the source editor |
+| `Ctrl/⌘ + E` | Open or focus the docked source editor |
+| `Enter` / `Shift + Enter` (in Find) | Next / previous match |
 | `Ctrl/⌘ + Z` | Undo last section merge |
 | `Ctrl/⌘ + Shift + Z` / `Ctrl/⌘ + Y` | Redo section merge |
 | `Alt + N` / `Alt + P` | Next / previous change section |
