@@ -146,6 +146,14 @@ check('no console/page errors on load', errors.length === 0, errors.join(' | '))
 check('text landing visible initially', await page.getByRole('heading', { name: 'Compare text' }).isVisible());
 check('Image is not rendered below Text', !(await page.locator('.image-compare').isVisible()));
 
+const textModeButton = page.getByRole('button', { name: 'Text', exact: true });
+const selectedModeColor = await textModeButton.evaluate(el => getComputedStyle(el).color);
+await textModeButton.hover();
+check('the selected mode retains its label color on hover', await textModeButton.evaluate(async el => {
+  await Promise.all(el.getAnimations().map(animation => animation.finished));
+  return getComputedStyle(el).color;
+}) === selectedModeColor);
+
 // Landing mode shows the input panels directly
 const landingPanels = await page.locator('.input-panel--left textarea').count();
 check('landing mode shows input panels', landingPanels === 1);
@@ -166,6 +174,25 @@ check(
   (await page.getByRole('button', { name: 'Open comparison session' }).count()) ===
     0,
 );
+
+const originalImagePicker = page.locator('.image-source-picker--original');
+const pickerBackground = await originalImagePicker.evaluate(el => getComputedStyle(el).backgroundColor);
+await originalImagePicker.hover();
+const hoveredPickerBackground = await originalImagePicker.evaluate(async el => {
+  await Promise.all(el.getAnimations().map(animation => animation.finished));
+  return getComputedStyle(el).backgroundColor;
+});
+check('the image picker shows hover feedback', hoveredPickerBackground !== pickerBackground);
+await originalImagePicker.dispatchEvent('dragenter');
+await originalImagePicker.and(page.locator('.image-source-picker--drag')).waitFor();
+const draggedPickerStyle = await originalImagePicker.evaluate(async el => {
+  await Promise.all(el.getAnimations().map(animation => animation.finished));
+  const style = getComputedStyle(el);
+  return { background: style.backgroundColor, border: style.borderTopStyle };
+});
+check('the image picker shows a distinct drop target while dragging',
+  draggedPickerStyle.background !== hoveredPickerBackground && draggedPickerStyle.border === 'solid');
+await originalImagePicker.dispatchEvent('dragleave');
 
 const originalPng = await makeImageFixture('original');
 const changedPng = await makeImageFixture('changed');
@@ -580,6 +607,23 @@ check(
 );
 await page.keyboard.press('Home');
 check('minimap Home returns to first mapped change', (await minimap.getAttribute('aria-valuenow')) === '1');
+
+const shortMinimap = await minimap.evaluate(gutter => {
+  const gutterRect = gutter.getBoundingClientRect();
+  const rowsRect = gutter.parentElement.querySelector('.diff-rows-container').getBoundingClientRect();
+  const markerRect = gutter.lastElementChild.getBoundingClientRect();
+  return {
+    markerFits: markerRect.bottom <= rowsRect.bottom && rowsRect.bottom < gutterRect.bottom,
+    x: markerRect.left + markerRect.width / 2 - gutterRect.left - gutter.clientLeft,
+    y: markerRect.top + markerRect.height / 2 - gutterRect.top - gutter.clientTop,
+  };
+});
+check('short-diff minimap markers fit within the rendered rows', shortMinimap.markerFits);
+await minimap.click({ position: { x: shortMinimap.x, y: shortMinimap.y } });
+check(
+  'clicking the last short-diff minimap marker selects that change',
+  (await minimap.getAttribute('aria-valuenow')) === (await minimap.getAttribute('aria-valuemax')),
+);
 
 // toggle inline view
 await page.getByRole('tab', { name: 'Unified' }).click();

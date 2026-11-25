@@ -680,6 +680,7 @@ function MinimapGutter({
     compute();
     const ro = new ResizeObserver(compute);
     if (content) ro.observe(content);
+    ro.observe(gutter);
     return () => ro.disconnect();
   }, [rows]);
 
@@ -722,21 +723,12 @@ function MinimapGutter({
   const handleGutterClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (markers.length === 0) return;
     const rect = e.currentTarget.getBoundingClientRect();
-    const y = e.clientY - rect.top;
-    const pct = y / rect.height;
-    const contentH =
-      e.currentTarget.parentElement?.querySelector<HTMLElement>(
-        '.diff-rows-container',
-      )?.scrollHeight ?? 0;
-    const scale = contentH > 0 ? Math.min(1, contentH / rect.height) : 1;
-    const targetIndex = Math.max(
-      0,
-      Math.min(rows.length - 1, Math.floor((pct / scale) * rows.length)),
-    );
+    const markerHeight = e.currentTarget.firstElementChild?.getBoundingClientRect().height ?? 0;
+    const percent = ((e.clientY - rect.top - markerHeight / 2) / rect.height) * 100;
     let nearestPosition = 0;
     let best = Infinity;
     markers.forEach((marker, index) => {
-      const distance = Math.abs(marker.index - targetIndex);
+      const distance = Math.abs(marker.percent - percent);
       if (distance < best) {
         best = distance;
         nearestPosition = index;

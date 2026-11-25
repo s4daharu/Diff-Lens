@@ -290,7 +290,7 @@ export function InputPanel({
             onReadyChange?.(true);
           }}
           placeholder={
-            placeholder ?? 'Paste text here, or drop a file onto this panel…'
+            placeholder ?? 'Paste text, or drop a file here…'
           }
           spellCheck={false}
           autoCapitalize="off"

@@ -1857,6 +1857,8 @@ body {
 
 .diff-rows-container {
   flex: 1;
+  /* Keep short diffs at their rendered height for the minimap. */
+  align-self: flex-start;
   min-width: max-content;
 }
 
